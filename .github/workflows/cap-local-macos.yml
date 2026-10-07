@@ -33,10 +33,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cap-local-macos-release
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Prepare native dependencies
         run: node scripts/setup.js
+      - name: Prepare framework layout for native test executables
+        run: |
+          mkdir -p target/aarch64-apple-darwin/release/Frameworks
+          ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" target/aarch64-apple-darwin/release/Frameworks/Spacedrive.framework
       - name: Test color transfers and CPU conversion
         run: |
           cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib color::tests -- --nocapture

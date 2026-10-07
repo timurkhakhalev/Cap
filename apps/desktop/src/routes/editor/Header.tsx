@@ -20,7 +20,6 @@ import { useEditorContext } from "./context";
 import OrganizationDropdown from "./OrganizationDropdown";
 import PresetsDropdown from "./PresetsDropdown";
 import { createRecordingTitleSave } from "./recording-title-save";
-import ShareButton from "./ShareButton";
 import { EditorButton } from "./ui";
 
 export type ResolutionOption = {
@@ -224,7 +223,6 @@ export function Header(props: {
 						</span>
 					</EditorButton>
 				</Show>
-				<ShareButton />
 				<button
 					type="button"
 					class={cx(
