@@ -159,10 +159,17 @@ impl ProResEncoder {
                 .run(frame, converted)
                 .map_err(QueueFrameError::Converter)?;
             converted.set_pts(pts);
-            converted as &frame::Video
+            converted
         } else {
-            frame as &frame::Video
+            frame
         };
+
+        // prores_ks writes color metadata from AVFrame into each frame header.
+        // Encoder-context tags alone only label the MOV container.
+        frame_to_send.set_color_space(color::Space::BT709);
+        frame_to_send.set_color_range(color::Range::MPEG);
+        frame_to_send.set_color_primaries(color::Primaries::BT709);
+        frame_to_send.set_color_transfer_characteristic(color::TransferCharacteristic::BT709);
 
         self.base
             .send_frame(frame_to_send, output, &mut self.encoder)
@@ -177,3 +184,79 @@ impl ProResEncoder {
 }
 
 unsafe impl Send for ProResEncoder {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prores_software_encodes_bt709_frame_headers_and_luma() {
+        ffmpeg::init().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("colors.mov");
+        let info = VideoInfo::from_raw(RawVideoFormat::Rgba, 192, 64, 30);
+        let mut output = format::output(&path).unwrap();
+        let mut encoder = ProResEncoder::builder(info).build(&mut output).unwrap();
+        output.write_header().unwrap();
+        let mut input = frame::Video::new(format::Pixel::RGBA, 192, 64);
+        let colors = [
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 0, 255],
+            [0, 0, 0],
+            [255, 255, 255],
+            [128, 128, 128],
+        ];
+        let stride = input.stride(0);
+        for row in 0..64 {
+            for x in 0..192 {
+                let rgb = colors[x / 32];
+                let offset = row * stride + x * 4;
+                input.data_mut(0)[offset..offset + 4]
+                    .copy_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+        encoder
+            .queue_frame(&mut input, Duration::ZERO, &mut output)
+            .unwrap();
+        encoder.flush(&mut output).unwrap();
+        output.write_trailer().unwrap();
+        drop(output);
+
+        let mut input = format::input(&path).unwrap();
+        let stream = input.streams().best(ffmpeg::media::Type::Video).unwrap();
+        let index = stream.index();
+        let mut decoder = context::Context::from_parameters(stream.parameters())
+            .unwrap()
+            .decoder()
+            .video()
+            .unwrap();
+        let mut decoded = frame::Video::empty();
+        for (stream, packet) in input.packets() {
+            if stream.index() != index {
+                continue;
+            }
+            decoder.send_packet(&packet).unwrap();
+            if decoder.receive_frame(&mut decoded).is_ok() {
+                break;
+            }
+        }
+        assert_eq!(decoded.color_space(), color::Space::BT709);
+        assert_eq!(decoded.color_range(), color::Range::MPEG);
+        assert_eq!(decoded.color_primaries(), color::Primaries::BT709);
+        assert_eq!(
+            decoded.color_transfer_characteristic(),
+            color::TransferCharacteristic::BT709
+        );
+        assert_eq!(decoded.format(), format::Pixel::YUVA444P12LE);
+        for (index, y) in [63u16, 173, 32, 16, 235, 126].into_iter().enumerate() {
+            let offset = 32 * decoded.stride(0) + (index * 32 + 16) * 2;
+            let value = u16::from_le_bytes(decoded.data(0)[offset..offset + 2].try_into().unwrap());
+            assert!(
+                value.abs_diff(y * 16) <= 32,
+                "patch {index}: {value} vs {}",
+                y * 16
+            );
+        }
+    }
+}

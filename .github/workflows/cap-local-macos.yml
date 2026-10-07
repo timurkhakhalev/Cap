@@ -37,6 +37,7 @@ jobs:
         with:
           shared-key: cap-local-macos-release
           cache-on-failure: true
+          cache-workspace-crates: true
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Prepare native dependencies
@@ -50,6 +51,7 @@ jobs:
           cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib color::tests -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib cpu_yuv::tests -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib rgb_software -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib prores_software -- --nocapture
       - name: Build independent app
         run: |
           touch .env
