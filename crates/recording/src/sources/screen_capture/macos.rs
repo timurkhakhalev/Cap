@@ -67,6 +67,19 @@ fn excluded_shareable_windows(
     collected
 }
 
+fn convert_screen_color(
+    sample: &cm::SampleBuf,
+    converter: &Mutex<cap_rendering::screen_color::ScreenColorConverter>,
+    runtime: &tokio::runtime::Handle,
+) -> anyhow::Result<arc::R<cm::SampleBuf>> {
+    let mut converter = converter
+        .lock()
+        .map_err(|_| anyhow!("Screen color converter lock poisoned"))?;
+    runtime
+        .block_on(converter.convert(sample))
+        .map_err(anyhow::Error::msg)
+}
+
 struct FrameScaler {
     session: arc::R<cidre::vt::PixelTransferSession>,
     pool: arc::R<cv::PixelBufPool>,
@@ -254,9 +267,9 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
             .with_queue_depth(queue_depth)
             .build();
 
-        settings.set_pixel_format(cv::PixelFormat::_420V);
-        // ScreenCaptureKit labels NV12 as BT.709 even when sRGB is requested.
-        settings.set_color_space_name(cg::color_space::names::itur_709());
+        // Obtain actual sRGB pixels; convert to BT.709 with the shared GPU shader.
+        settings.set_pixel_format(cv::PixelFormat::_32_BGRA);
+        settings.set_color_space_name(cg::color_space::names::srgb());
 
         if let Some(crop_bounds) = self.config.crop_bounds {
             debug!("crop bounds: {:?}", crop_bounds);
@@ -277,6 +290,11 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
         let expected_width = self.video_info.width as usize;
         let expected_height = self.video_info.height as usize;
         let frame_scaler: Arc<Mutex<Option<FrameScaler>>> = Arc::new(Mutex::new(None));
+        let color_converter = Arc::new(Mutex::new(
+            cap_rendering::screen_color::ScreenColorConverter::new()
+                .await
+                .map_err(|error| anyhow!("Screen color converter: {error}"))?,
+        ));
         let scaling_logged = Arc::new(AtomicBool::new(false));
         let scaled_frame_count = Arc::new(AtomicU64::new(0));
 
@@ -297,6 +315,7 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
             system_audio_frame_counter: system_audio_frame_counter.clone(),
             system_audio_drop_counter: system_audio_drop_counter.clone(),
             frame_scaler: frame_scaler.clone(),
+            color_converter: color_converter.clone(),
             scaling_logged: scaling_logged.clone(),
             scaled_frame_count: scaled_frame_count.clone(),
             stall_health_tx: stall_health_tx.clone(),
@@ -309,6 +328,9 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
                 let sys_audio_drop_counter = system_audio_drop_counter.clone();
                 let sys_audio_frame_counter = system_audio_frame_counter.clone();
                 let stall_health_tx = stall_health_tx.clone();
+                let color_converter = color_converter.clone();
+                let runtime = tokio::runtime::Handle::current();
+                let color_error_tx = error_tx.clone();
                 move |frame| {
                     let sample_buffer = frame.sample_buf();
 
@@ -319,8 +341,21 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
                     );
 
                     match &frame {
-                        scap_screencapturekit::Frame::Screen(frame) => {
-                            let Some(image_buf) = frame.image_buf() else {
+                        scap_screencapturekit::Frame::Screen(_) => {
+                            let Some(image) = sample_buffer.image_buf() else { return; };
+                            if image.width() == 0 || image.height() == 0 { return; }
+                            let Some(image) = sample_buffer.image_buf() else { return; };
+                        if image.width() == 0 || image.height() == 0 { return; }
+                        let converted = match convert_screen_color(sample_buffer, &color_converter, &runtime) {
+                                Ok(sample) => sample,
+                                Err(error) => {
+                                    error!(%error, "Screen color conversion failed");
+                                    let _ = color_error_tx.send(ns::Error::with_domain(ns::ErrorDomain::os_status(), -1, None));
+                                    return;
+                                }
+                            };
+                            let sample_buffer = converted.as_ref();
+                            let Some(image_buf) = sample_buffer.image_buf() else {
                                 return;
                             };
                             if image_buf.height() == 0 || image_buf.width() == 0 {
@@ -933,6 +968,7 @@ struct CapturerRebuildParams {
     system_audio_frame_counter: Arc<AtomicU64>,
     system_audio_drop_counter: Arc<AtomicU64>,
     frame_scaler: Arc<Mutex<Option<FrameScaler>>>,
+    color_converter: Arc<Mutex<cap_rendering::screen_color::ScreenColorConverter>>,
     scaling_logged: Arc<AtomicBool>,
     scaled_frame_count: Arc<AtomicU64>,
     stall_health_tx: output_pipeline::HealthSender,
@@ -975,9 +1011,8 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
         .with_queue_depth(queue_depth)
         .build();
 
-    settings.set_pixel_format(cv::PixelFormat::_420V);
-    // ScreenCaptureKit labels NV12 as BT.709 even when sRGB is requested.
-    settings.set_color_space_name(cg::color_space::names::itur_709());
+    settings.set_pixel_format(cv::PixelFormat::_32_BGRA);
+    settings.set_color_space_name(cg::color_space::names::srgb());
 
     if let Some(crop_bounds) = params.config.crop_bounds {
         settings.set_src_rect(cg::Rect::new(
@@ -1005,6 +1040,9 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
             let sys_audio_drop_counter = params.system_audio_drop_counter.clone();
             let sys_audio_frame_counter = params.system_audio_frame_counter.clone();
             let stall_health_tx = params.stall_health_tx.clone();
+            let color_converter = params.color_converter.clone();
+            let runtime = tokio::runtime::Handle::current();
+            let color_error_tx = error_tx.clone();
             move |frame| {
                 let sample_buffer = frame.sample_buf();
 
@@ -1015,8 +1053,17 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
                 );
 
                 match &frame {
-                    scap_screencapturekit::Frame::Screen(frame) => {
-                        let Some(image_buf) = frame.image_buf() else {
+                    scap_screencapturekit::Frame::Screen(_) => {
+                        let converted = match convert_screen_color(sample_buffer, &color_converter, &runtime) {
+                            Ok(sample) => sample,
+                            Err(error) => {
+                                error!(%error, "Screen color conversion failed");
+                                let _ = color_error_tx.send(ns::Error::with_domain(ns::ErrorDomain::os_status(), -1, None));
+                                return;
+                            }
+                        };
+                        let sample_buffer = converted.as_ref();
+                        let Some(image_buf) = sample_buffer.image_buf() else {
                             return;
                         };
                         if image_buf.height() == 0 || image_buf.width() == 0 {

@@ -148,7 +148,7 @@ pub struct RgbaToNv12Converter {
     cached_stride: u32,
     cached_bind_groups: Option<[wgpu::BindGroup; 2]>,
     cached_texture_view: Option<wgpu::TextureView>,
-    cached_texture_ptr: usize,
+    cached_source_texture: Option<wgpu::Texture>,
     surface_output: bool,
     #[cfg(target_os = "macos")]
     surface_ring: Option<Nv12SurfaceRing>,
@@ -174,6 +174,10 @@ unsafe impl Sync for Nv12Surface {}
 
 #[cfg(target_os = "macos")]
 impl Nv12Surface {
+    pub(crate) fn into_pixel_buffer(self) -> arc::R<cv::PixelBuf> {
+        self.0
+    }
+
     /// The underlying `CVPixelBufferRef`, valid while `self` is alive.
     pub fn as_pixel_buffer_ptr(&self) -> *mut std::ffi::c_void {
         (self.0.as_ref() as *const cv::PixelBuf as *const std::ffi::c_void).cast_mut()
@@ -500,7 +504,7 @@ impl RgbaToNv12Converter {
             cached_stride: 0,
             cached_bind_groups: None,
             cached_texture_view: None,
-            cached_texture_ptr: 0,
+            cached_source_texture: None,
             surface_output: false,
             #[cfg(target_os = "macos")]
             surface_ring: None,
@@ -630,7 +634,7 @@ impl RgbaToNv12Converter {
         self.cached_stride = stride;
         self.cached_bind_groups = None;
         self.cached_texture_view = None;
-        self.cached_texture_ptr = 0;
+        self.cached_source_texture = None;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -669,9 +673,8 @@ impl RgbaToNv12Converter {
         };
         queue.write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
 
-        let texture_ptr = source_texture as *const wgpu::Texture as usize;
-        let needs_rebind =
-            self.cached_texture_ptr != texture_ptr || self.cached_bind_groups.is_none();
+        let needs_rebind = self.cached_source_texture.as_ref() != Some(source_texture)
+            || self.cached_bind_groups.is_none();
 
         if needs_rebind {
             let source_view = source_texture.create_view(&Default::default());
@@ -702,7 +705,7 @@ impl RgbaToNv12Converter {
 
             self.cached_texture_view = Some(source_view);
             self.cached_bind_groups = Some([bg0, bg1]);
-            self.cached_texture_ptr = texture_ptr;
+            self.cached_source_texture = Some(source_texture.clone());
         }
 
         let bind_groups = self.cached_bind_groups.as_ref().unwrap();
@@ -2254,8 +2257,8 @@ mod surface_output_tests {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
     }
 
-    #[test]
-    fn export_patches_use_bt709_matrix_range_and_transfer() {
+    #[tokio::test]
+    async fn export_patches_use_bt709_matrix_range_and_transfer() {
         let (device, queue) = device().expect("macOS GPU available for color verification");
         let patches = [
             ([0, 0, 0], [16, 128, 128]),
@@ -2288,14 +2291,7 @@ mod surface_output_tests {
             source.size(),
         );
         let mut converter = RgbaToNv12Converter::new(&device);
-        let frame = pollster::block_on(convert(
-            &device,
-            &queue,
-            &mut converter,
-            &source,
-            width,
-            height,
-        ));
+        let frame = convert(&device, &queue, &mut converter, &source, width, height).await;
         let mut cpu = vec![0; (width * height * 3 / 2) as usize];
         crate::cpu_yuv::rgba_to_nv12(
             &data,
@@ -2324,6 +2320,34 @@ mod surface_output_tests {
                     );
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn replacing_source_texture_rebinds_the_conversion() {
+        let (device, queue) = device().expect("macOS GPU available");
+        let mut source = gradient_texture(&device, &queue, 4, 2);
+        let mut converter = RgbaToNv12Converter::new(&device);
+        for (index, (rgb, expected_y)) in [([255, 0, 0], 63), ([0, 255, 0], 173), ([0, 0, 255], 32)]
+            .into_iter()
+            .enumerate()
+        {
+            if index > 0 {
+                source = gradient_texture(&device, &queue, 4, 2);
+            }
+            let data: Vec<u8> = (0..8).flat_map(|_| [rgb[0], rgb[1], rgb[2], 255]).collect();
+            queue.write_texture(
+                source.as_image_copy(),
+                &data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(16),
+                    rows_per_image: None,
+                },
+                source.size(),
+            );
+            let frame = convert(&device, &queue, &mut converter, &source, 4, 2).await;
+            assert!(frame.data[0].abs_diff(expected_y) <= 2);
         }
     }
 

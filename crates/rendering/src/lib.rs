@@ -57,6 +57,8 @@ mod project_recordings;
 mod readiness;
 mod recorded_cursor_assets;
 mod scene;
+#[cfg(target_os = "macos")]
+pub mod screen_color;
 mod segment_timing;
 pub mod spring_mass_damper;
 mod takeover;

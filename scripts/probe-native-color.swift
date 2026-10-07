@@ -26,18 +26,22 @@ let window = NSWindow(contentRect: NSRect(x: 100, y: 200, width: 1280, height: 7
 window.title = "Cap Color Calibration"
 window.contentView = PatchView()
 window.orderFrontRegardless()
+let front = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in window.orderFrontRegardless() }
 let windowID = CGWindowID(window.windowNumber)
 Task {
     do {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let target = content.windows.first(where: { $0.windowID == windowID }) else { fatalError("calibration window unavailable") }
-        for (name, space) in [("sRGB", CGColorSpace.sRGB), ("709", CGColorSpace.itur_709)] {
+        for (name, space) in [("window-sRGB", CGColorSpace.sRGB), ("window-709", CGColorSpace.itur_709), ("display-sRGB", CGColorSpace.sRGB), ("display-709", CGColorSpace.itur_709), ("display-BGRA-sRGB", CGColorSpace.sRGB)] {
             let config = SCStreamConfiguration()
             config.width = 1280; config.height = 748
-            config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            config.pixelFormat = name.contains("BGRA") ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
             config.colorSpaceName = space
             let collector = Collector()
-            let stream = SCStream(filter: SCContentFilter(desktopIndependentWindow: target), configuration: config, delegate: nil)
+            let display = content.displays.first!
+            let filter = name.hasPrefix("display") ? SCContentFilter(display: display, excludingWindows: []) : SCContentFilter(desktopIndependentWindow: target)
+            if name.hasPrefix("display") { config.sourceRect = target.frame }
+            let stream = SCStream(filter: filter, configuration: config, delegate: nil)
             try stream.addStreamOutput(collector, type: .screen, sampleHandlerQueue: DispatchQueue(label: "color-probe"))
             try await stream.startCapture()
             try await Task.sleep(nanoseconds: 300_000_000)
@@ -45,11 +49,17 @@ Task {
             let attachments = CVBufferCopyAttachments(image, .shouldPropagate)
             print(name, String(describing: attachments))
             CVPixelBufferLockBaseAddress(image, .readOnly)
-            let bytes = CVPixelBufferGetBaseAddressOfPlane(image, 0)!.assumingMemoryBound(to: UInt8.self)
-            let stride = CVPixelBufferGetBytesPerRowOfPlane(image, 0)
-            print("Y", (0..<16).map { bytes[60 * stride + $0 * 80 + 40] })
+            if name.contains("BGRA") {
+                let bytes = CVPixelBufferGetBaseAddress(image)!.assumingMemoryBound(to: UInt8.self)
+                let stride = CVPixelBufferGetBytesPerRow(image)
+                print("RGB", (0..<16).map { bytes[60 * stride + ($0 * 80 + 40) * 4 + 2] })
+            } else {
+                let bytes = CVPixelBufferGetBaseAddressOfPlane(image, 0)!.assumingMemoryBound(to: UInt8.self)
+                let stride = CVPixelBufferGetBytesPerRowOfPlane(image, 0)
+                print("Y", (0..<16).map { bytes[60 * stride + $0 * 80 + 40] })
+            }
             CVPixelBufferUnlockBaseAddress(image, .readOnly)
-            let output = URL(fileURLWithPath: "/tmp/cap-capture-\(name)-writer709.mp4")
+            let output = URL(fileURLWithPath: "/tmp/cap-native-color-\(name)-writer709.mp4")
             try? FileManager.default.removeItem(at: output)
             let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
