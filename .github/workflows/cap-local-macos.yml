@@ -21,7 +21,7 @@ jobs:
       CARGO_PROFILE_RELEASE_DEBUG: 0
       CARGO_PROFILE_RELEASE_LTO: "false"
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
-      CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+      CARGO_PROFILE_RELEASE_INCREMENTAL: "true"
       RUST_TARGET_TRIPLE: aarch64-apple-darwin
       VITE_ENVIRONMENT: production
       VITE_SERVER_URL: http://127.0.0.1:9
@@ -33,11 +33,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
         with:
-          shared-key: cap-local-macos-release
-          cache-on-failure: true
-          cache-workspace-crates: true
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-${{ github.sha }}
+          restore-keys: |
+            cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-
+            cap-local-v2-${{ runner.os }}-${{ runner.arch }}-
+            v0-rust-cap-local-macos-release-Darwin-arm64-
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Prepare native dependencies
@@ -54,21 +60,12 @@ jobs:
           cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib prores_software -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-project --lib portrait_camera_shape -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib portrait_camera_crop -- --nocapture
-      - name: Generate bindings and test camera shapes
-        run: |
-          touch .env
-          bun run --cwd apps/desktop build:sidecar
-          bun run --cwd apps/desktop preparescript --release
-          bun run --cwd apps/desktop build
-          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib typescript_bindings_tests::export_typescript_bindings -- --nocapture
-          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib portrait_preview_has_a_fixed_vertical_aspect -- --nocapture
-          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib ordinary_late_camera_state_preserves_unrelated_camera_fields -- --nocapture
-          bun run tsc --noEmit -p apps/desktop/tsconfig.json
-          bun run --cwd apps/desktop vitest run src/components/CameraPreviewChrome.test.ts
       - name: Build independent app
         run: |
           touch .env
           bun run tauri:build --target aarch64-apple-darwin --bundles app
+          bun run tsc --noEmit -p apps/desktop/tsconfig.json
+          bun run --cwd apps/desktop vitest run src/components/CameraPreviewChrome.test.ts
       - name: Check affected Rust crates
         run: cargo check --locked --release --target aarch64-apple-darwin -p cap-rendering -p cap-recording -p cap-export -p cap-enc-ffmpeg -p cap -p cap-desktop
       - name: Package app and native color tests

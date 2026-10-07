@@ -1321,6 +1321,9 @@ fn get_codec_and_options(
             _ => {}
         }
 
+        if is_export {
+            options.set("color_trc", "iec61966-2-1");
+        }
         encoders.push((codec, options));
     }
 
@@ -1733,6 +1736,55 @@ mod self_test_tests {
 mod rgb_color_tests {
     use super::*;
     use crate::video::is_rgb;
+
+    #[test]
+    fn rgb_software_export_declares_srgb_in_the_encoded_stream() {
+        ffmpeg::init().unwrap();
+        let config = VideoInfo::from_raw_ffmpeg(format::Pixel::RGBA, 192, 64, 30);
+        let (codec, options) = get_codec_and_options(
+            &config,
+            H264Preset::Ultrafast,
+            Some(&["libx264"]),
+            true,
+            Some(18),
+        )
+        .into_iter()
+        .next()
+        .unwrap();
+        let mut opened =
+            open_video_encoder(codec, options, &config, 192, 64, 0.3, false, Some(18)).unwrap();
+        let mut yuv = frame::Video::empty();
+        opened
+            .converter
+            .as_mut()
+            .unwrap()
+            .run(&rgb_bars(format::Pixel::RGBA), &mut yuv)
+            .unwrap();
+        yuv.set_pts(Some(0));
+        opened.encoder.send_frame(&yuv).unwrap();
+        let mut packets = Vec::new();
+        receive_packets(&mut opened.encoder, &mut packets);
+        opened.encoder.send_eof().unwrap();
+        receive_packets(&mut opened.encoder, &mut packets);
+        let mut decoder = context::Context::new_with_codec(
+            ffmpeg::decoder::find(ffmpeg::codec::Id::H264).unwrap(),
+        )
+        .decoder()
+        .video()
+        .unwrap();
+        let mut frames = Vec::new();
+        for packet in packets {
+            decoder.send_packet(&packet).unwrap();
+            receive_frames(&mut decoder, &mut frames);
+        }
+        decoder.send_eof().unwrap();
+        receive_frames(&mut decoder, &mut frames);
+        assert!(!frames.is_empty());
+        assert_eq!(
+            frames[0].color_transfer_characteristic(),
+            color::TransferCharacteristic::IEC61966_2_1
+        );
+    }
 
     const COLORS: [[u8; 3]; 6] = [
         [255, 0, 0],

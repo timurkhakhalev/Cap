@@ -424,10 +424,19 @@ struct Nv12Params {
 
 impl RgbaToNv12Converter {
     pub fn new(device: &wgpu::Device) -> Self {
+        Self::with_transfer(device, false)
+    }
+
+    pub fn new_bt709(device: &wgpu::Device) -> Self {
+        Self::with_transfer(device, true)
+    }
+
+    fn with_transfer(device: &wgpu::Device, bt709: bool) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RGBA to NV12 Converter"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(format!(
-                "{}\n{}",
+                "const OUTPUT_BT709: bool = {};\n{}\n{}",
+                bt709,
                 crate::color::SHADER,
                 include_str!("shaders/rgba_to_nv12.wgsl")
             ))),
@@ -2258,13 +2267,13 @@ mod surface_output_tests {
     }
 
     #[tokio::test]
-    async fn export_patches_use_bt709_matrix_range_and_transfer() {
+    async fn export_patches_preserve_srgb_with_bt709_matrix_and_range() {
         let (device, queue) = device().expect("macOS GPU available for color verification");
         let patches = [
             ([0, 0, 0], [16, 128, 128]),
             ([255, 255, 255], [235, 128, 128]),
-            ([119, 119, 119], [107, 128, 128]),
-            ([136, 136, 136], [123, 128, 128]),
+            ([119, 119, 119], [118, 128, 128]),
+            ([136, 136, 136], [133, 128, 128]),
             ([255, 0, 0], [63, 102, 240]),
             ([0, 255, 0], [173, 42, 26]),
             ([0, 0, 255], [32, 240, 118]),

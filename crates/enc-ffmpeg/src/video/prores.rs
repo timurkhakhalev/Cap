@@ -92,7 +92,7 @@ impl ProResEncoderBuilder {
             (*encoder.as_mut_ptr()).color_primaries =
                 ffmpeg::ffi::AVColorPrimaries::AVCOL_PRI_BT709;
             (*encoder.as_mut_ptr()).color_trc =
-                ffmpeg::ffi::AVColorTransferCharacteristic::AVCOL_TRC_BT709;
+                ffmpeg::ffi::AVColorTransferCharacteristic::AVCOL_TRC_IEC61966_2_1;
         }
 
         let mut options = Dictionary::new();
@@ -169,7 +169,8 @@ impl ProResEncoder {
         frame_to_send.set_color_space(color::Space::BT709);
         frame_to_send.set_color_range(color::Range::MPEG);
         frame_to_send.set_color_primaries(color::Primaries::BT709);
-        frame_to_send.set_color_transfer_characteristic(color::TransferCharacteristic::BT709);
+        frame_to_send
+            .set_color_transfer_characteristic(color::TransferCharacteristic::IEC61966_2_1);
 
         self.base
             .send_frame(frame_to_send, output, &mut self.encoder)
@@ -190,7 +191,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prores_software_encodes_bt709_frame_headers_and_luma() {
+    fn prores_software_encodes_srgb_transfer_with_bt709_matrix_and_luma() {
         ffmpeg::init().unwrap();
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("colors.mov");
@@ -246,7 +247,7 @@ mod tests {
         assert_eq!(decoded.color_primaries(), color::Primaries::BT709);
         assert_eq!(
             decoded.color_transfer_characteristic(),
-            color::TransferCharacteristic::BT709
+            color::TransferCharacteristic::IEC61966_2_1
         );
         assert_eq!(decoded.format(), format::Pixel::YUVA444P12LE);
         for (index, y) in [63u16, 173, 32, 16, 235, 126].into_iter().enumerate() {

@@ -101,11 +101,6 @@ impl MovExportSettings {
 
                 fill_rgba_frame(&mut reusable_frame, &frame)
                     .map_err(|e| ExportError::Other(format!("Failed to prepare frame: {e}")))?;
-                for pixel in reusable_frame.data_mut(0).chunks_exact_mut(4) {
-                    for channel in &mut pixel[..3] {
-                        *channel = cap_rendering::color::srgb_to_bt709(*channel);
-                    }
-                }
                 let encoded_frame = if sample_timing.is_some() {
                     frame_count
                 } else {

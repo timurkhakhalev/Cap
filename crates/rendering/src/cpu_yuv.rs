@@ -45,9 +45,9 @@ pub fn rgba_to_nv12(
     for row in 0..height {
         for col in 0..width {
             let offset = row * source_stride + col * 4;
-            let r = crate::color::srgb_to_bt709(input[offset]) as i32;
-            let g = crate::color::srgb_to_bt709(input[offset + 1]) as i32;
-            let b = crate::color::srgb_to_bt709(input[offset + 2]) as i32;
+            let r = input[offset] as i32;
+            let g = input[offset + 1] as i32;
+            let b = input[offset + 2] as i32;
             output[row * width + col] =
                 (16 + ((47 * r + 157 * g + 16 * b + 128) >> 8)).clamp(16, 235) as u8;
         }
@@ -60,7 +60,7 @@ pub fn rgba_to_nv12(
             let rgb: [i32; 3] = std::array::from_fn(|channel| {
                 [top, top + 4, bottom, bottom + 4]
                     .into_iter()
-                    .map(|offset| crate::color::srgb_to_bt709(input[offset + channel]) as i32)
+                    .map(|offset| input[offset + channel] as i32)
                     .sum::<i32>()
                     .saturating_add(2)
                     / 4
@@ -961,6 +961,16 @@ fn clamp_u8(val: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_gray_values_keep_the_srgb_transfer() {
+        for (rgb, y) in [(17, 31), (119, 118), (136, 133)] {
+            let mut output = [0; 6];
+            rgba_to_nv12(&[rgb, rgb, rgb, 255].repeat(4), 8, 2, 2, &mut output);
+            assert!(output[0].abs_diff(y) <= 1);
+            assert_eq!(&output[4..], &[128, 128]);
+        }
+    }
 
     #[test]
     fn test_nv12_basic_conversion() {

@@ -24,7 +24,10 @@ fn rgb_to_v(r: f32, g: f32, b: f32) -> u32 {
 fn safe_load(coord: vec2<u32>, dims: vec2<u32>) -> vec4<f32> {
     let c = min(coord, dims - vec2<u32>(1u, 1u));
     let color = textureLoad(input, c, 0);
-    return vec4<f32>(srgb_to_bt709(color.rgb), color.a);
+    if (OUTPUT_BT709) {
+        return vec4<f32>(srgb_to_bt709(color.rgb), color.a);
+    }
+    return color;
 }
 
 @compute @workgroup_size(8, 8)

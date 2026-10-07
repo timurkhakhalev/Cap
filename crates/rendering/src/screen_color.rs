@@ -33,7 +33,7 @@ impl ScreenColorConverter {
             .await
             .map_err(|error| error.to_string())?;
         let textures = IOSurfaceTextureCache::new().ok_or("Metal device unavailable")?;
-        let mut converter = RgbaToNv12Converter::new(&device);
+        let mut converter = RgbaToNv12Converter::new_bt709(&device);
         converter.enable_surface_output();
         Ok(Self {
             device,
