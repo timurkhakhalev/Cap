@@ -717,12 +717,11 @@ fn center_camera_window(app: &AppHandle, window: &WebviewWindow) {
     };
 
     let toolbar_height = 56.0;
-    let size = camera_state.size as f64;
-    let is_full = camera_state.shape == crate::camera::CameraPreviewShape::Full;
-    let aspect_ratio = crate::camera::WIDE_CAMERA_ASPECT_RATIO as f64;
-
-    let window_width = if is_full { size * aspect_ratio } else { size };
-    let window_height = size + toolbar_height;
+    let (width, height) = camera_state
+        .shape
+        .dimensions(camera_state.size, crate::camera::WIDE_CAMERA_ASPECT_RATIO);
+    let window_width = f64::from(width);
+    let window_height = f64::from(height) + toolbar_height;
 
     let monitor_info = CursorMonitorInfo::get();
     let (pos_x, pos_y) = monitor_info.center_position(window_width, window_height);

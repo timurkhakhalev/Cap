@@ -428,7 +428,7 @@ fn presentation_from_input(
             }
         }
         CameraPreviewShape::Round => return Err("Round camera preview is not square".into()),
-        CameraPreviewShape::Square | CameraPreviewShape::Full => {
+        CameraPreviewShape::Square | CameraPreviewShape::Full | CameraPreviewShape::Portrait => {
             LinuxCameraShape::RoundedRectangle {
                 radius_pixels: ((input.radius * sx.min(sy)).round() as u32)
                     .min(width.min(height) / 2),

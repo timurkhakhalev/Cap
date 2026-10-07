@@ -325,6 +325,10 @@ const CAMERA_SHAPES = [
 		name: "Source",
 		value: "source",
 	},
+	{
+		name: "Portrait (9:16)",
+		value: "portrait",
+	},
 ] satisfies Array<{ name: string; value: CameraShape }>;
 
 const CAMERA_X_POSITIONS = [

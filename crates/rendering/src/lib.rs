@@ -4467,6 +4467,13 @@ impl ProjectUniforms {
                         min_axis * scale + camera_padding,
                         min_axis * scale + camera_padding,
                     ],
+                    CameraShape::Portrait => {
+                        let width = (min_axis * scale + camera_padding).min(
+                            (output_size[1] - 2.0 * camera_padding).max(1.0)
+                                * CameraShape::PORTRAIT_ASPECT_RATIO,
+                        );
+                        [width, width / CameraShape::PORTRAIT_ASPECT_RATIO]
+                    }
                 };
 
                 let size = camera_size_for(zoomed_size);
@@ -4536,6 +4543,13 @@ impl ProjectUniforms {
 
                 let crop_bounds = match project.camera.shape {
                     CameraShape::Source => [0.0, 0.0, frame_size[0], frame_size[1]],
+                    CameraShape::Portrait => fit_crop_to_target(
+                        [0.0, 0.0],
+                        frame_size,
+                        CameraShape::PORTRAIT_ASPECT_RATIO,
+                        [0.5, 0.5],
+                        1.0,
+                    ),
                     CameraShape::Square => {
                         if frame_size[0] > frame_size[1] {
                             let offset = (frame_size[0] - frame_size[1]) / 2.0;
@@ -5052,6 +5066,22 @@ mod tests {
         let bounds = inset_crop_bounds([0.0, 0.0, 640.0, 480.0], [640.0, 480.0], 2.0);
 
         assert_eq!(bounds, [2.0, 2.0, 638.0, 478.0]);
+    }
+
+    #[test]
+    fn portrait_camera_crop_is_centered_and_preserves_aspect() {
+        for source in [[1920.0, 1080.0], [640.0, 480.0], [1080.0, 1920.0]] {
+            let crop = fit_crop_to_target(
+                [0.0, 0.0],
+                source,
+                CameraShape::PORTRAIT_ASPECT_RATIO,
+                [0.5, 0.5],
+                1.0,
+            );
+            assert!(((crop[2] - crop[0]) / (crop[3] - crop[1]) - 9.0 / 16.0).abs() < 0.00001);
+            assert_eq!((crop[0] + crop[2]) / 2.0, source[0] / 2.0);
+            assert_eq!((crop[1] + crop[3]) / 2.0, source[1] / 2.0);
+        }
     }
 
     #[test]

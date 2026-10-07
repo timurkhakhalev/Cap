@@ -52,6 +52,19 @@ jobs:
           cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib cpu_yuv::tests -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib rgb_software -- --nocapture
           cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib prores_software -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-project --lib portrait_camera_shape -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib portrait_camera_crop -- --nocapture
+      - name: Generate bindings and test camera shapes
+        run: |
+          touch .env
+          bun run --cwd apps/desktop build:sidecar
+          bun run --cwd apps/desktop preparescript --release
+          bun run --cwd apps/desktop build
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib typescript_bindings_tests::export_typescript_bindings -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib portrait_preview_has_a_fixed_vertical_aspect -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib ordinary_late_camera_state_preserves_unrelated_camera_fields -- --nocapture
+          bun run tsc --noEmit -p apps/desktop/tsconfig.json
+          bun run --cwd apps/desktop vitest run src/components/CameraPreviewChrome.test.ts
       - name: Build independent app
         run: |
           touch .env
@@ -61,6 +74,8 @@ jobs:
       - name: Package app and native color tests
         run: |
           mkdir -p artifacts
+          cp apps/desktop/src/utils/tauri.ts artifacts/tauri.ts
+          cp packages/ui-solid/src/auto-imports.d.ts artifacts/auto-imports.d.ts
           ditto -c -k --sequesterRsrc --keepParent 'target/aarch64-apple-darwin/release/bundle/macos/Cap Local.app' 'artifacts/Cap Local.zip'
           python3 - <<'PY'
           from pathlib import Path

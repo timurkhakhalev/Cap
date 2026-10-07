@@ -53,6 +53,7 @@ export const cameraPreviewAspectRatio = (
 	shape: CameraPreviewShape,
 	frameAspectRatio?: number | null,
 ) => {
+	if (shape === "portrait") return 9 / 16;
 	if (shape !== "full") return 1;
 	if (
 		typeof frameAspectRatio === "number" &&
@@ -72,8 +73,8 @@ export const cameraPreviewDimensions = (
 	const base = clampCameraSize(size);
 	const aspectRatio = cameraPreviewAspectRatio(shape, frameAspectRatio);
 	return {
-		height: base,
-		width: base * aspectRatio,
+		height: base / Math.min(aspectRatio, 1),
+		width: base * Math.max(aspectRatio, 1),
 	};
 };
 
@@ -173,7 +174,9 @@ export function CameraPreviewToolbar(props: {
 							? "square"
 							: shape === "square"
 								? "full"
-								: "round",
+								: shape === "full"
+									? "portrait"
+									: "round",
 					)
 				}
 			>
@@ -181,6 +184,9 @@ export function CameraPreviewToolbar(props: {
 				{props.state.shape === "square" && <IconCapSquare class="size-5.5" />}
 				{props.state.shape === "full" && (
 					<IconLucideRectangleHorizontal class="size-5.5" />
+				)}
+				{props.state.shape === "portrait" && (
+					<IconLucideRectangleVertical class="size-5.5" />
 				)}
 			</ControlButton>
 			<ControlButton

@@ -6710,6 +6710,10 @@ fn apply_recording_camera_preview_state(
             config.camera.shape = CameraShape::Source;
             config.camera.rounding = 25.0;
         }
+        CameraPreviewShape::Portrait => {
+            config.camera.shape = CameraShape::Portrait;
+            config.camera.rounding = 25.0;
+        }
     }
 
     config.camera.background_blur = cap_project::BackgroundBlurConfig {
@@ -10383,6 +10387,7 @@ mod preparing_presentation_parity_tests {
             (CameraPreviewShape::Round, CameraShape::Square, 100.0),
             (CameraPreviewShape::Square, CameraShape::Square, 25.0),
             (CameraPreviewShape::Full, CameraShape::Source, 25.0),
+            (CameraPreviewShape::Portrait, CameraShape::Portrait, 25.0),
         ] {
             for blur in [
                 cap_project::BackgroundBlurMode::Off,

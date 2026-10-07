@@ -165,6 +165,23 @@ pub enum CameraPreviewShape {
     Round,
     Square,
     Full,
+    Portrait,
+}
+
+impl CameraPreviewShape {
+    pub fn aspect_ratio(&self, source_aspect: f32) -> f32 {
+        match self {
+            Self::Full => source_aspect.max(WIDE_CAMERA_ASPECT_RATIO),
+            Self::Portrait => cap_project::CameraShape::PORTRAIT_ASPECT_RATIO,
+            Self::Round | Self::Square => 1.0,
+        }
+    }
+
+    pub fn dimensions(&self, size: f32, source_aspect: f32) -> (f32, f32) {
+        let base = clamp_size(size);
+        let aspect = self.aspect_ratio(source_aspect);
+        (base * aspect.max(1.0), base / aspect.min(1.0))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -1643,7 +1660,7 @@ impl Renderer {
                 match state.shape {
                     CameraPreviewShape::Round => 0.0,
                     CameraPreviewShape::Square => 1.0,
-                    CameraPreviewShape::Full => 2.0,
+                    CameraPreviewShape::Full | CameraPreviewShape::Portrait => 2.0,
                 }
             },
             size: normalized_size,
@@ -1693,14 +1710,8 @@ async fn resize_window(
 ) -> anyhow::Result<(u32, u32, f64)> {
     trace!("CameraPreview/resize_window");
 
-    let base = clamp_size(state.size);
-    let aspect = if state.shape == CameraPreviewShape::Full {
-        aspect.max(WIDE_CAMERA_ASPECT_RATIO)
-    } else {
-        1.0
-    };
-    let window_width = base * aspect;
-    let window_height = base + TOOLBAR_HEIGHT;
+    let (window_width, camera_height) = state.shape.dimensions(state.size, aspect);
+    let window_height = camera_height + TOOLBAR_HEIGHT;
 
     let window_width = window_width as u32;
     let window_height = window_height as u32;
@@ -1801,6 +1812,16 @@ mod tests {
     use std::thread;
     use tokio::{runtime::Runtime, sync::oneshot, time::Duration};
     use wgpu::CompositeAlphaMode;
+
+    #[test]
+    fn portrait_preview_has_a_fixed_vertical_aspect_and_keeps_the_short_side_size() {
+        let shape = super::CameraPreviewShape::Portrait;
+        for source_aspect in [16.0 / 9.0, 4.0 / 3.0, 9.0 / 16.0] {
+            let (width, height) = shape.dimensions(230.0, source_aspect);
+            assert_eq!(width, 230.0);
+            assert!((width / height - 9.0 / 16.0).abs() < 0.00001);
+        }
+    }
 
     #[test]
     fn texture_covers_square_region_without_upscaling() {
