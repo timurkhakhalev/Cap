@@ -36,6 +36,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: cap-local-macos-release
+          cache-on-failure: true
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Prepare native dependencies

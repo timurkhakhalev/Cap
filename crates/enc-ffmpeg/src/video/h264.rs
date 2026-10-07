@@ -1732,6 +1732,7 @@ mod self_test_tests {
 #[cfg(test)]
 mod rgb_color_tests {
     use super::*;
+    use crate::video::is_rgb;
 
     const COLORS: [[u8; 3]; 6] = [
         [255, 0, 0],
