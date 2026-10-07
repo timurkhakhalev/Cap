@@ -33,6 +33,7 @@ use std::{path::PathBuf, time::Instant};
 use tokio::sync::mpsc;
 
 pub mod camera3d;
+pub mod color;
 pub mod composite_frame;
 mod coord;
 pub mod cpu_yuv;
@@ -6768,53 +6769,13 @@ impl<'a> FrameRenderer<'a> {
         let uv_plane_size = uv_stride * (height as usize / 2);
         nv12_buf.resize(y_plane_size + uv_plane_size, 0);
 
-        let src_data = &rgba_frame.data;
-        let src_stride = padded_bytes_per_row as usize;
-
-        for row in 0..height as usize {
-            let src_row = &src_data[row * src_stride..row * src_stride + width as usize * 4];
-            let y_row = &mut nv12_buf[row * y_stride..(row + 1) * y_stride];
-            for col in 0..width as usize {
-                let r = src_row[col * 4] as i32;
-                let g = src_row[col * 4 + 1] as i32;
-                let b = src_row[col * 4 + 2] as i32;
-                y_row[col] = ((16 + ((65 * r + 129 * g + 25 * b + 128) >> 8)) as u8).clamp(16, 235);
-            }
-        }
-
-        let uv_offset = y_plane_size;
-        for row in 0..(height as usize / 2) {
-            let src_row0 =
-                &src_data[row * 2 * src_stride..row * 2 * src_stride + width as usize * 4];
-            let src_row1 = &src_data
-                [(row * 2 + 1) * src_stride..(row * 2 + 1) * src_stride + width as usize * 4];
-            let uv_row =
-                &mut nv12_buf[uv_offset + row * uv_stride..uv_offset + (row + 1) * uv_stride];
-            for col in 0..(width as usize / 2) {
-                let r = (src_row0[col * 8] as i32
-                    + src_row0[col * 8 + 4] as i32
-                    + src_row1[col * 8] as i32
-                    + src_row1[col * 8 + 4] as i32
-                    + 2)
-                    / 4;
-                let g = (src_row0[col * 8 + 1] as i32
-                    + src_row0[col * 8 + 5] as i32
-                    + src_row1[col * 8 + 1] as i32
-                    + src_row1[col * 8 + 5] as i32
-                    + 2)
-                    / 4;
-                let b = (src_row0[col * 8 + 2] as i32
-                    + src_row0[col * 8 + 6] as i32
-                    + src_row1[col * 8 + 2] as i32
-                    + src_row1[col * 8 + 6] as i32
-                    + 2)
-                    / 4;
-                uv_row[col * 2] =
-                    ((128 + ((-38 * r - 74 * g + 112 * b + 128) >> 8)) as u8).clamp(16, 240);
-                uv_row[col * 2 + 1] =
-                    ((128 + ((112 * r - 94 * g - 18 * b + 128) >> 8)) as u8).clamp(16, 240);
-            }
-        }
+        cpu_yuv::rgba_to_nv12(
+            &rgba_frame.data,
+            padded_bytes_per_row as usize,
+            width as usize,
+            height as usize,
+            &mut nv12_buf,
+        );
 
         frame_pipeline::Nv12RenderedFrame {
             data: self.nv12_buffer_pool.wrap(nv12_buf),

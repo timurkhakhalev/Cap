@@ -422,8 +422,10 @@ impl RgbaToNv12Converter {
     pub fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RGBA to NV12 Converter"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shaders/rgba_to_nv12.wgsl"
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(format!(
+                "{}\n{}",
+                crate::color::SHADER,
+                include_str!("shaders/rgba_to_nv12.wgsl")
             ))),
         });
 
@@ -2250,6 +2252,79 @@ mod surface_output_tests {
         }))
         .ok()?;
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    }
+
+    #[test]
+    fn export_patches_use_bt709_matrix_range_and_transfer() {
+        let (device, queue) = device().expect("macOS GPU available for color verification");
+        let patches = [
+            ([0, 0, 0], [16, 128, 128]),
+            ([255, 255, 255], [235, 128, 128]),
+            ([119, 119, 119], [107, 128, 128]),
+            ([136, 136, 136], [123, 128, 128]),
+            ([255, 0, 0], [63, 102, 240]),
+            ([0, 255, 0], [173, 42, 26]),
+            ([0, 0, 255], [32, 240, 118]),
+            ([0, 255, 255], [188, 154, 16]),
+        ];
+        let width = patches.len() as u32 * 4;
+        let height = 2;
+        let source = gradient_texture(&device, &queue, width, height);
+        let data: Vec<u8> = (0..height)
+            .flat_map(|_| {
+                patches
+                    .iter()
+                    .flat_map(|(rgb, _)| (0..4).flat_map(move |_| [rgb[0], rgb[1], rgb[2], 255]))
+            })
+            .collect();
+        queue.write_texture(
+            source.as_image_copy(),
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: None,
+            },
+            source.size(),
+        );
+        let mut converter = RgbaToNv12Converter::new(&device);
+        let frame = pollster::block_on(convert(
+            &device,
+            &queue,
+            &mut converter,
+            &source,
+            width,
+            height,
+        ));
+        let mut cpu = vec![0; (width * height * 3 / 2) as usize];
+        crate::cpu_yuv::rgba_to_nv12(
+            &data,
+            width as usize * 4,
+            width as usize,
+            height as usize,
+            &mut cpu,
+        );
+        for (index, (_, expected)) in patches.iter().enumerate() {
+            let col = index * 4;
+            let gpu = [
+                frame.data[col],
+                frame.data[frame.y_stride as usize * height as usize + col],
+                frame.data[frame.y_stride as usize * height as usize + col + 1],
+            ];
+            let cpu = [
+                cpu[col],
+                cpu[width as usize * height as usize + col],
+                cpu[width as usize * height as usize + col + 1],
+            ];
+            for actual in [gpu, cpu] {
+                for (actual, expected) in actual.into_iter().zip(expected) {
+                    assert!(
+                        actual.abs_diff(*expected) <= 2,
+                        "patch {index}: {actual} vs {expected}"
+                    );
+                }
+            }
+        }
     }
 
     fn gradient_texture(

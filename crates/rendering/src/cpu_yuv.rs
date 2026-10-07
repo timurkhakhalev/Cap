@@ -32,6 +32,48 @@ impl ConversionProgress {
     }
 }
 
+pub fn rgba_to_nv12(
+    input: &[u8],
+    source_stride: usize,
+    width: usize,
+    height: usize,
+    output: &mut [u8],
+) {
+    assert!(width.is_multiple_of(2) && height.is_multiple_of(2));
+    assert!(source_stride >= width * 4 && input.len() >= source_stride * height);
+    assert!(output.len() >= width * height * 3 / 2);
+    for row in 0..height {
+        for col in 0..width {
+            let offset = row * source_stride + col * 4;
+            let r = crate::color::srgb_to_bt709(input[offset]) as i32;
+            let g = crate::color::srgb_to_bt709(input[offset + 1]) as i32;
+            let b = crate::color::srgb_to_bt709(input[offset + 2]) as i32;
+            output[row * width + col] =
+                (16 + ((47 * r + 157 * g + 16 * b + 128) >> 8)).clamp(16, 235) as u8;
+        }
+    }
+    let uv_offset = width * height;
+    for row in 0..height / 2 {
+        for col in 0..width / 2 {
+            let top = row * 2 * source_stride + col * 8;
+            let bottom = top + source_stride;
+            let rgb: [i32; 3] = std::array::from_fn(|channel| {
+                [top, top + 4, bottom, bottom + 4]
+                    .into_iter()
+                    .map(|offset| crate::color::srgb_to_bt709(input[offset + channel]) as i32)
+                    .sum::<i32>()
+                    .saturating_add(2)
+                    / 4
+            });
+            let [r, g, b] = rgb;
+            let offset = uv_offset + row * width + col * 2;
+            output[offset] = (128 + ((-26 * r - 86 * g + 112 * b + 128) >> 8)).clamp(16, 240) as u8;
+            output[offset + 1] =
+                (128 + ((112 * r - 102 * g - 10 * b + 128) >> 8)).clamp(16, 240) as u8;
+        }
+    }
+}
+
 pub fn nv12_to_rgba(
     y_data: &[u8],
     uv_data: &[u8],
@@ -63,15 +105,15 @@ pub fn nv12_to_rgba(
             let d = u - 128;
             let e = v - 128;
 
-            let r = clamp_u8((298 * c + 409 * e + 128) >> 8);
-            let g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
-            let b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+            let r = clamp_u8((298 * c + 459 * e + 128) >> 8);
+            let g = clamp_u8((298 * c - 55 * d - 136 * e + 128) >> 8);
+            let b = clamp_u8((298 * c + 541 * d + 128) >> 8);
 
             let out_idx = out_row_start + col * 4;
             if out_idx + 3 < output.len() {
-                output[out_idx] = r;
-                output[out_idx + 1] = g;
-                output[out_idx + 2] = b;
+                output[out_idx] = crate::color::bt709_to_srgb(r);
+                output[out_idx + 1] = crate::color::bt709_to_srgb(g);
+                output[out_idx + 2] = crate::color::bt709_to_srgb(b);
                 output[out_idx + 3] = 255;
             }
         }
@@ -111,15 +153,15 @@ pub fn yuv420p_to_rgba(
             let d = u - 128;
             let e = v - 128;
 
-            let r = clamp_u8((298 * c + 409 * e + 128) >> 8);
-            let g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
-            let b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+            let r = clamp_u8((298 * c + 459 * e + 128) >> 8);
+            let g = clamp_u8((298 * c - 55 * d - 136 * e + 128) >> 8);
+            let b = clamp_u8((298 * c + 541 * d + 128) >> 8);
 
             let out_idx = out_row_start + col * 4;
             if out_idx + 3 < output.len() {
-                output[out_idx] = r;
-                output[out_idx + 1] = g;
-                output[out_idx + 2] = b;
+                output[out_idx] = crate::color::bt709_to_srgb(r);
+                output[out_idx + 1] = crate::color::bt709_to_srgb(g);
+                output[out_idx + 2] = crate::color::bt709_to_srgb(b);
                 output[out_idx + 3] = 255;
             }
         }
@@ -480,15 +522,15 @@ fn nv12_convert_row_scalar(
         let d = u - 128;
         let e = v - 128;
 
-        let r = clamp_u8((298 * c + 409 * e + 128) >> 8);
-        let g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
-        let b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+        let r = clamp_u8((298 * c + 459 * e + 128) >> 8);
+        let g = clamp_u8((298 * c - 55 * d - 136 * e + 128) >> 8);
+        let b = clamp_u8((298 * c + 541 * d + 128) >> 8);
 
         let out_idx = out_row_start + col * 4;
         if out_idx + 3 < output.len() {
-            output[out_idx] = r;
-            output[out_idx + 1] = g;
-            output[out_idx + 2] = b;
+            output[out_idx] = crate::color::bt709_to_srgb(r);
+            output[out_idx + 1] = crate::color::bt709_to_srgb(g);
+            output[out_idx + 2] = crate::color::bt709_to_srgb(b);
             output[out_idx + 3] = 255;
         }
     }
@@ -862,15 +904,15 @@ fn yuv420p_convert_row_scalar(
         let d = u - 128;
         let e = v - 128;
 
-        let r = clamp_u8((298 * c + 409 * e + 128) >> 8);
-        let g = clamp_u8((298 * c - 100 * d - 208 * e + 128) >> 8);
-        let b = clamp_u8((298 * c + 516 * d + 128) >> 8);
+        let r = clamp_u8((298 * c + 459 * e + 128) >> 8);
+        let g = clamp_u8((298 * c - 55 * d - 136 * e + 128) >> 8);
+        let b = clamp_u8((298 * c + 541 * d + 128) >> 8);
 
         let out_idx = out_row_start + col * 4;
         if out_idx + 3 < output.len() {
-            output[out_idx] = r;
-            output[out_idx + 1] = g;
-            output[out_idx + 2] = b;
+            output[out_idx] = crate::color::bt709_to_srgb(r);
+            output[out_idx + 1] = crate::color::bt709_to_srgb(g);
+            output[out_idx + 2] = crate::color::bt709_to_srgb(b);
             output[out_idx + 3] = 255;
         }
     }
@@ -944,10 +986,34 @@ mod tests {
         );
 
         for pixel in output.chunks(4) {
-            assert!(pixel[0] > 100 && pixel[0] < 140);
-            assert!(pixel[1] > 100 && pixel[1] < 140);
-            assert!(pixel[2] > 100 && pixel[2] < 140);
+            assert!(pixel[0].abs_diff(142) <= 1);
+            assert!(pixel[1].abs_diff(142) <= 1);
+            assert!(pixel[2].abs_diff(142) <= 1);
             assert_eq!(pixel[3], 255);
+        }
+    }
+
+    #[test]
+    fn bt709_primary_patches_decode_to_srgb() {
+        let patches = [
+            ([63, 102, 240], [255, 0, 0]),
+            ([173, 42, 26], [0, 255, 0]),
+            ([32, 240, 118], [0, 0, 255]),
+            ([16, 128, 128], [0, 0, 0]),
+            ([235, 128, 128], [255, 255, 255]),
+        ];
+        for ([y, u, v], expected) in patches {
+            let mut nv12_output = [0; 16];
+            let mut planar_output = [0; 16];
+            nv12_to_rgba(&[y; 4], &[u, v], 2, 2, 2, 2, &mut nv12_output);
+            yuv420p_to_rgba(&[y; 4], &[u], &[v], 2, 2, 2, 1, &mut planar_output);
+            assert_eq!(nv12_output, planar_output);
+            for pixel in nv12_output.chunks_exact(4) {
+                for (actual, expected) in pixel[..3].iter().zip(expected) {
+                    assert!(actual.abs_diff(expected) <= 4, "{pixel:?} vs {expected}");
+                }
+                assert_eq!(pixel[3], 255);
+            }
         }
     }
 

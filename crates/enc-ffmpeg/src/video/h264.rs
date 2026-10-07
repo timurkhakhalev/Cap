@@ -1,3 +1,4 @@
+use super::configure_rgb_converter;
 use std::{thread, time::Duration};
 
 use cap_media_info::{Pixel, VideoInfo, ensure_even};
@@ -618,44 +619,6 @@ pub(crate) fn open_video_encoder_with_flags(
     )
 }
 
-fn is_rgb(format: format::Pixel) -> bool {
-    format.descriptor().is_some_and(|descriptor| unsafe {
-        (*descriptor.as_ptr()).flags & ffmpeg::ffi::AV_PIX_FMT_FLAG_RGB as u64 != 0
-    })
-}
-
-fn configure_rgb_converter(
-    converter: &mut ffmpeg::software::scaling::Context,
-    input: format::Pixel,
-    output: format::Pixel,
-) -> Result<(), H264EncoderError> {
-    if !is_rgb(input) || is_rgb(output) {
-        return Ok(());
-    }
-
-    // swscale defaults to BT.601 even though the encoder declares BT.709.
-    // RGB input is full range; the encoded YUV contract below is limited range.
-    let result = unsafe {
-        let coefficients = ffmpeg::ffi::sws_getCoefficients(ffmpeg::ffi::SWS_CS_ITU709);
-        ffmpeg::ffi::sws_setColorspaceDetails(
-            converter.as_mut_ptr(),
-            coefficients,
-            1,
-            coefficients,
-            0,
-            0,
-            1 << 16,
-            1 << 16,
-        )
-    };
-    if result < 0 {
-        return Err(H264EncoderError::ColorConversion(ffmpeg::Error::from(
-            result,
-        )));
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn open_video_encoder_inner(
     codec: Codec,
@@ -739,7 +702,8 @@ fn open_video_encoder_inner(
             flags,
         ) {
             Ok(mut context) => {
-                configure_rgb_converter(&mut context, input_config.pixel_format, output_format)?;
+                configure_rgb_converter(&mut context, input_config.pixel_format, output_format)
+                    .map_err(H264EncoderError::ColorConversion)?;
                 debug!(
                     encoder = %codec.name(),
                     src_format = ?input_config.pixel_format,

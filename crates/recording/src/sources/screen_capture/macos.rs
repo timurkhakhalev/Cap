@@ -255,7 +255,8 @@ impl ScreenCaptureConfig<CMSampleBufferCapture> {
             .build();
 
         settings.set_pixel_format(cv::PixelFormat::_420V);
-        settings.set_color_space_name(cg::color_space::names::srgb());
+        // ScreenCaptureKit labels NV12 as BT.709 even when sRGB is requested.
+        settings.set_color_space_name(cg::color_space::names::itur_709());
 
         if let Some(crop_bounds) = self.config.crop_bounds {
             debug!("crop bounds: {:?}", crop_bounds);
@@ -975,7 +976,8 @@ async fn rebuild_capturer(params: &CapturerRebuildParams) -> anyhow::Result<Capt
         .build();
 
     settings.set_pixel_format(cv::PixelFormat::_420V);
-    settings.set_color_space_name(cg::color_space::names::srgb());
+    // ScreenCaptureKit labels NV12 as BT.709 even when sRGB is requested.
+    settings.set_color_space_name(cg::color_space::names::itur_709());
 
     if let Some(crop_bounds) = params.config.crop_bounds {
         settings.set_src_rect(cg::Rect::new(

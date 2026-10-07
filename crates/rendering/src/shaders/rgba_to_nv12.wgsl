@@ -10,20 +10,21 @@ struct Params {
 @group(0) @binding(2) var<uniform> params: Params;
 
 fn rgb_to_y(r: f32, g: f32, b: f32) -> u32 {
-    return u32(clamp(16.0 + 65.481 * r + 128.553 * g + 24.966 * b, 0.0, 255.0));
+    return u32(round(clamp(16.0 + 46.5594 * r + 156.6288 * g + 15.8118 * b, 0.0, 255.0)));
 }
 
 fn rgb_to_u(r: f32, g: f32, b: f32) -> u32 {
-    return u32(clamp(128.0 - 37.797 * r - 74.203 * g + 112.0 * b, 0.0, 255.0));
+    return u32(round(clamp(128.0 - 25.6642 * r - 86.3358 * g + 112.0 * b, 0.0, 255.0)));
 }
 
 fn rgb_to_v(r: f32, g: f32, b: f32) -> u32 {
-    return u32(clamp(128.0 + 112.0 * r - 93.786 * g - 18.214 * b, 0.0, 255.0));
+    return u32(round(clamp(128.0 + 112.0 * r - 101.7303 * g - 10.2697 * b, 0.0, 255.0)));
 }
 
 fn safe_load(coord: vec2<u32>, dims: vec2<u32>) -> vec4<f32> {
     let c = min(coord, dims - vec2<u32>(1u, 1u));
-    return textureLoad(input, c, 0);
+    let color = textureLoad(input, c, 0);
+    return vec4<f32>(srgb_to_bt709(color.rgb), color.a);
 }
 
 @compute @workgroup_size(8, 8)

@@ -53,7 +53,7 @@ impl ProResEncoderBuilder {
             .unwrap_or((input_config.width, input_config.height));
         let output_format = format::Pixel::YUVA444P10LE;
 
-        let converter = if input_config.pixel_format != output_format
+        let mut converter = if input_config.pixel_format != output_format
             || input_config.width != output_width
             || input_config.height != output_height
         {
@@ -70,6 +70,10 @@ impl ProResEncoderBuilder {
             None
         };
 
+        if let Some(converter) = &mut converter {
+            super::configure_rgb_converter(converter, input_config.pixel_format, output_format)?;
+        }
+
         let mut encoder_ctx = context::Context::new_with_codec(codec);
         let thread_count = thread::available_parallelism()
             .map(|v| v.get())
@@ -83,7 +87,7 @@ impl ProResEncoderBuilder {
         encoder.set_time_base(input_config.time_base);
         encoder.set_frame_rate(Some(input_config.frame_rate));
         encoder.set_colorspace(color::Space::BT709);
-        encoder.set_color_range(color::Range::JPEG);
+        encoder.set_color_range(color::Range::MPEG);
         unsafe {
             (*encoder.as_mut_ptr()).color_primaries =
                 ffmpeg::ffi::AVColorPrimaries::AVCOL_PRI_BT709;

@@ -1069,18 +1069,10 @@ function FaqStep(props: { active: boolean }) {
 					visible() ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4",
 				)}
 			>
-				<FaqItem question="Is Cap free to use?">
+				<FaqItem question="Do I need an account or a license?">
 					<p class="text-[13px] text-gray-10 leading-relaxed">
-						Cap is free for personal use. For teams and commercial use, check
-						out our{" "}
-						<button
-							type="button"
-							onClick={() => shell.open("https://cap.so/pricing?ref=desktop")}
-							class="text-blue-10 hover:text-blue-11 underline underline-offset-2"
-						>
-							pricing plans
-						</button>
-						.
+						Cap Local includes all local recording, editing, and export
+						features. No account or paid license is required.
 					</p>
 				</FaqItem>
 				<FaqItem question="What's the difference between Instant and Studio?">

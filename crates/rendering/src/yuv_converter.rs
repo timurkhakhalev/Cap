@@ -272,15 +272,19 @@ impl YuvConverterPipelines {
 
         let nv12_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("NV12 to RGBA Converter"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shaders/nv12_to_rgba.wgsl"
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(format!(
+                "{}\n{}",
+                crate::color::SHADER,
+                include_str!("shaders/nv12_to_rgba.wgsl")
             ))),
         });
 
         let yuv420p_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("YUV420P to RGBA Converter"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
-                "shaders/yuv420p_to_rgba.wgsl"
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(format!(
+                "{}\n{}",
+                crate::color::SHADER,
+                include_str!("shaders/yuv420p_to_rgba.wgsl")
             ))),
         });
 

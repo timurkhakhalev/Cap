@@ -1,0 +1,68 @@
+name: Cap Local macOS
+
+on:
+  push:
+    branches: ["local/color-and-unlocked-desktop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cap-local-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+      RUST_TARGET_TRIPLE: aarch64-apple-darwin
+      VITE_ENVIRONMENT: production
+      VITE_SERVER_URL: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Prepare native dependencies
+        run: node scripts/setup.js
+      - name: Test color transfers and CPU conversion
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib color::tests -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib cpu_yuv::tests -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib rgb_software -- --nocapture
+      - name: Build independent app
+        run: |
+          touch .env
+          bun run tauri:build --target aarch64-apple-darwin --bundles app
+      - name: Check affected Rust crates
+        run: cargo check --locked --release --target aarch64-apple-darwin -p cap-rendering -p cap-recording -p cap-export -p cap-enc-ffmpeg -p cap -p cap-desktop
+      - name: Package app and native color tests
+        run: |
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent 'target/aarch64-apple-darwin/release/bundle/macos/Cap Local.app' 'artifacts/Cap Local.zip'
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil
+          candidates = [path for path in Path('target/aarch64-apple-darwin/release/deps').glob('cap_rendering-*') if path.is_file() and os.access(path, os.X_OK) and path.suffix == '']
+          assert len(candidates) == 1, candidates
+          shutil.copy2(candidates[0], 'artifacts/cap-color-tests')
+          PY
+          shasum -a 256 'artifacts/Cap Local.zip' artifacts/cap-color-tests > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cap-local-macos-arm64
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: error

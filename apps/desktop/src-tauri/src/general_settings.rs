@@ -357,7 +357,7 @@ impl Default for GeneralSettingsStore {
             camera_window_position: None,
             camera_window_positions_by_monitor_name: BTreeMap::new(),
             has_completed_onboarding: false,
-            enable_telemetry: true,
+            enable_telemetry: false,
             out_of_process_muxer: cap_recording::DEFAULT_OUT_OF_PROCESS_MUXER,
             recordings_path: None,
             previous_recordings_paths: Vec::new(),

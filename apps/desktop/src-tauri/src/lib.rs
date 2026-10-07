@@ -7276,7 +7276,6 @@ pub async fn run(recording_logging_handle: LoggingHandle, logs_dir: Option<PathB
             app.manage(FinalizingRecordings::default());
             app.manage(editor_preparing::PreparingConsumers::default());
             app.manage(updates::UpdatesState::default());
-            updates::spawn_background_loop(app.clone());
 
             #[cfg(unix)]
             {

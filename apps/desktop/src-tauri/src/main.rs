@@ -241,9 +241,9 @@ fn main() {
 fn resolve_log_directory(base_directory: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
     base_directory.map(|directory| {
         #[cfg(target_os = "macos")]
-        let directory = directory.join("Library/Logs").join("so.cap.desktop");
+        let directory = directory.join("Library/Logs").join("so.cap.local");
         #[cfg(not(target_os = "macos"))]
-        let directory = directory.join("so.cap.desktop").join("logs");
+        let directory = directory.join("so.cap.local").join("logs");
         directory
     })
 }
@@ -453,9 +453,9 @@ mod logging_tests {
     fn available_base_directory_preserves_the_platform_log_path() {
         let base = LogDirectory::new();
         #[cfg(target_os = "macos")]
-        let expected = base.0.join("Library/Logs/so.cap.desktop");
+        let expected = base.0.join("Library/Logs/so.cap.local");
         #[cfg(not(target_os = "macos"))]
-        let expected = base.0.join("so.cap.desktop/logs");
+        let expected = base.0.join("so.cap.local/logs");
         assert_eq!(resolve_log_directory(Some(base.0.clone())), Some(expected));
         assert!(std::fs::read_dir(&base.0).unwrap().next().is_none());
     }

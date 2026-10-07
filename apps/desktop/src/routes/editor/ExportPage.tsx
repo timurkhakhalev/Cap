@@ -215,7 +215,7 @@ export function ExportPage() {
 			format: "Mp4",
 			fps: 30,
 			exportTo: "file",
-			resolution: { label: "720p", value: "720p", width: 1280, height: 720 },
+			resolution: { label: "1080p", value: "1080p", width: 1920, height: 1080 },
 			compression: "Maximum",
 			optimizeFilesize: false,
 		}),
@@ -225,7 +225,8 @@ export function ExportPage() {
 	if (
 		"type" in initialDialog &&
 		initialDialog.type === "export" &&
-		initialDialog.destination
+		initialDialog.destination &&
+		initialDialog.destination !== "link"
 	) {
 		setSettings("exportTo", initialDialog.destination);
 	}
@@ -963,19 +964,13 @@ export function ExportPage() {
 	};
 
 	const destinationOptions = () =>
-		EXPORT_TO_OPTIONS.map((option) => ({
-			value: option.value,
-			label:
-				option.value === "link" && meta().sharing ? "Reupload" : option.label,
-			icon: option.icon,
-			disabled: option.value === "link" && disablesLinkExport(),
-			disabledReason:
-				option.value === "link" && disablesLinkExport()
-					? cursorOnly()
-						? "Cursor-only exports can only be saved to a file or clipboard"
-						: "Transparent exports can only be saved to a file or clipboard"
-					: undefined,
-		}));
+		EXPORT_TO_OPTIONS.filter((option) => option.value !== "link").map(
+			(option) => ({
+				value: option.value,
+				label: option.label,
+				icon: option.icon,
+			}),
+		);
 
 	const formatOptions = () =>
 		FORMAT_OPTIONS.map((option) => {
