@@ -36,9 +36,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ${{ env.CARGO_HOME }}/bin
+            ${{ env.CARGO_HOME }}/.crates.toml
+            ${{ env.CARGO_HOME }}/.crates2.json
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
+            ${{ github.workspace }}/target
           key: cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-${{ github.sha }}
           restore-keys: |
             cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-
