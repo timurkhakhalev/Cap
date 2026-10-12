@@ -15,6 +15,16 @@ export function loopAroundPlayhead(
 	return { enabled: length >= MIN_LOOP_SECONDS, start, end: start + length };
 }
 
+export function togglePlaybackLoop(
+	loop: PlaybackLoop,
+	playhead: number,
+	duration: number,
+): PlaybackLoop {
+	return loopRange(loop, duration)
+		? { ...loop, enabled: false }
+		: loopAroundPlayhead(playhead, duration);
+}
+
 export function setLoopEdgeAt(
 	loop: PlaybackLoop,
 	edge: "start" | "end",

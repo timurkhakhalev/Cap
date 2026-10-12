@@ -9,7 +9,22 @@ import {
 	setLoopEdge,
 	setLoopEdgeAt,
 	snapLoopTime,
+	togglePlaybackLoop,
 } from "./playback-loop";
+
+it("creates a new loop at the current cursor after disabling an old range", () => {
+	const disabled = togglePlaybackLoop(
+		{ enabled: true, start: 2, end: 6 },
+		3,
+		24,
+	);
+	expect(disabled).toEqual({ enabled: false, start: 2, end: 6 });
+	expect(togglePlaybackLoop(disabled, 11, 24)).toEqual({
+		enabled: true,
+		start: 11,
+		end: 16,
+	});
+});
 
 it("repeats at the last frame and accepts a start between frames", () => {
 	const loop = { enabled: true, start: 2.01, end: 5 };

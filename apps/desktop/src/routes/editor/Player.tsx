@@ -35,10 +35,10 @@ import { MaskOverlay } from "./MaskOverlay";
 import { PerformanceOverlay } from "./PerformanceOverlay";
 import {
 	createLoopRestart,
-	loopAroundPlayhead,
 	loopRange,
 	loopRestartTime,
 	setLoopEdgeAt,
+	togglePlaybackLoop,
 } from "./playback-loop";
 import { usePreparingEditor } from "./preparing-editor-context";
 import { PreparingFrame } from "./preparing-frame";
@@ -266,19 +266,9 @@ export function PlayerContent(props: { compactness?: number }) {
 	const activeLoop = () => loopRange(editorState.playbackLoop, totalDuration());
 	const playhead = () => editorState.previewTime ?? editorState.playbackTime;
 	const toggleLoop = () => {
-		if (activeLoop()) {
-			setEditorState("playbackLoop", "enabled", false);
-			return;
-		}
-		const saved = loopRange(
-			{ ...editorState.playbackLoop, enabled: true },
-			totalDuration(),
-		);
 		setEditorState(
 			"playbackLoop",
-			saved
-				? { ...saved, enabled: true }
-				: loopAroundPlayhead(playhead(), totalDuration()),
+			togglePlaybackLoop(editorState.playbackLoop, playhead(), totalDuration()),
 		);
 	};
 	const setLoopEdgeAtPlayhead = (edge: "start" | "end") =>
