@@ -1368,7 +1368,10 @@ impl CapWindowId {
             Self::Editor { .. } => (1275.0, 800.0),
             Self::ScreenshotEditor { .. } => (800.0, 600.0),
             Self::Settings => (780.0, 560.0),
-            Self::Camera => (200.0, 200.0),
+            Self::Camera => (
+                f64::from(crate::camera::MIN_CAMERA_SIZE),
+                f64::from(crate::camera::MIN_CAMERA_SIZE + crate::camera::TOOLBAR_HEIGHT),
+            ),
             Self::Upgrade => (950.0, 850.0),
             Self::ModeSelect => (580.0, 340.0),
             Self::Onboarding => (860.0, 690.0),
@@ -4278,6 +4281,23 @@ pub fn editor_window_for_path(app: &AppHandle, path: &std::path::Path) -> Option
 #[cfg(test)]
 mod content_window_tests {
     use super::*;
+
+    #[test]
+    fn camera_window_minimum_allows_every_preview_shape_at_minimum_size() {
+        use crate::camera::{CameraPreviewShape, MIN_CAMERA_SIZE, TOOLBAR_HEIGHT};
+
+        let (min_width, min_height) = CapWindowId::Camera.min_size().unwrap();
+        for shape in [
+            CameraPreviewShape::Round,
+            CameraPreviewShape::Square,
+            CameraPreviewShape::Full,
+            CameraPreviewShape::Portrait,
+        ] {
+            let (width, height) = shape.dimensions(MIN_CAMERA_SIZE, 16.0 / 9.0);
+            assert!(f64::from(width) >= min_width);
+            assert!(f64::from(height + TOOLBAR_HEIGHT) >= min_height);
+        }
+    }
 
     fn rect(x: f64, y: f64, width: f64, height: f64) -> ContentWindowRect {
         ContentWindowRect {

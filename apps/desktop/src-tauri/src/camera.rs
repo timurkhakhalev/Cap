@@ -24,7 +24,7 @@ use std::{
     },
     thread,
 };
-use tauri::{LogicalPosition, LogicalSize, Manager, PhysicalSize, WebviewWindow};
+use tauri::{LogicalPosition, Manager, PhysicalSize, WebviewWindow};
 use tokio::{
     runtime::Runtime,
     sync::{broadcast, oneshot},
@@ -34,7 +34,7 @@ use tokio::{
 use tracing::{error, info, trace, warn};
 use wgpu::{CompositeAlphaMode, SurfaceTexture};
 
-static TOOLBAR_HEIGHT: f32 = 56.0;
+pub const TOOLBAR_HEIGHT: f32 = 56.0;
 
 const DEFAULT_SURFACE_SCALE: f64 = 2.0;
 // Quantizing the target texture width stops drag-resizing from rebuilding the
@@ -1722,6 +1722,7 @@ async fn resize_window(
             let window = window.clone();
             move || {
                 let result: tauri::Result<(u32, u32, f64)> = (|| {
+                    let mut position = None;
                     if should_move {
                         let (monitor_size, monitor_offset, monitor_scale_factor): (
                             PhysicalSize<u32>,
@@ -1743,7 +1744,7 @@ async fn resize_window(
                             - 100.0) as u32
                             + monitor_offset.y;
 
-                        window.set_position(LogicalPosition::new(x, y))?;
+                        position = Some(LogicalPosition::new(x as f64, y as f64));
                     } else if let Some(monitor) = window.current_monitor()? {
                         let scale_factor = monitor.scale_factor();
                         let monitor_pos = monitor.position().to_logical::<f64>(scale_factor);
@@ -1775,14 +1776,32 @@ async fn resize_window(
                             new_y = monitor_pos.y;
                         }
 
-                        if (new_x - current_pos.x).abs() > 1.0
-                            || (new_y - current_pos.y).abs() > 1.0
-                        {
-                            window.set_position(LogicalPosition::new(new_x, new_y))?;
-                        }
+                        position = Some(LogicalPosition::new(new_x, new_y));
                     }
 
-                    window.set_size(LogicalSize::new(window_width, window_height))?;
+                    #[cfg(target_os = "macos")]
+                    {
+                        use objc2_app_kit::NSWindow;
+                        use objc2_foundation::{NSPoint, NSSize};
+
+                        let native = window.ns_window()? as *const NSWindow;
+                        let native =
+                            unsafe { native.as_ref() }.ok_or(tauri::Error::WindowNotFound)?;
+                        let frame = native.frame();
+                        let top_left =
+                            NSPoint::new(frame.origin.x, frame.origin.y + frame.size.height);
+                        // Tao queues setContentSize; the GPU must wait for the actual content bounds.
+                        native.setContentSize(NSSize::new(
+                            f64::from(window_width),
+                            f64::from(window_height),
+                        ));
+                        native.setFrameTopLeftPoint(top_left);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    window.set_size(tauri::LogicalSize::new(window_width, window_height))?;
+                    if let Some(position) = position {
+                        window.set_position(position)?;
+                    }
 
                     let scale_factor = window
                         .scale_factor()
@@ -1790,7 +1809,12 @@ async fn resize_window(
                         .filter(|scale| *scale > 0.0)
                         .unwrap_or(DEFAULT_SURFACE_SCALE);
 
-                    Ok((window_width, window_height, scale_factor))
+                    let size = window.inner_size()?.to_logical::<f64>(scale_factor);
+                    Ok((
+                        size.width.round() as u32,
+                        size.height.round() as u32,
+                        scale_factor,
+                    ))
                 })();
 
                 tx.send(result).ok();
