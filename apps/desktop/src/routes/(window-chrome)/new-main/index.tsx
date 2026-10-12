@@ -25,13 +25,11 @@ import {
 	createEffect,
 	createMemo,
 	createSignal,
-	ErrorBoundary,
 	For,
 	on,
 	onCleanup,
 	onMount,
 	Show,
-	Suspense,
 } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
 import toast from "solid-toast";
@@ -40,11 +38,7 @@ import Mode from "~/components/Mode";
 import { RecoveryToast } from "~/components/RecoveryToast";
 import Tooltip from "~/components/Tooltip";
 import { Input } from "~/routes/editor/ui";
-import {
-	authStore,
-	generalSettingsStore,
-	recordingSettingsStore,
-} from "~/store";
+import { generalSettingsStore, recordingSettingsStore } from "~/store";
 import { createSignInMutation } from "~/utils/auth";
 import { createTauriEventListener } from "~/utils/createEventListener";
 import {
@@ -52,7 +46,6 @@ import {
 	createStableDevicesQuery,
 	type MicrophoneWithDetails,
 } from "~/utils/devices";
-import { clientEnv } from "~/utils/env";
 import { hideCurrentWindow } from "~/utils/hide-window";
 import {
 	importImageFromPicker,
@@ -63,7 +56,6 @@ import {
 	createCameraMutation,
 	createCleanCaptureQuery,
 	createCurrentRecordingQuery,
-	createLicenseQuery,
 	createMicrophoneMutation,
 	getEditorRecordingTarget,
 	getPermissions,
@@ -1846,12 +1838,8 @@ function Page() {
 	const isRecording = () => !!currentRecording.data;
 	const isActivelyRecording = () =>
 		currentRecording.data?.status === "recording";
-	const auth = authStore.createQuery();
 	const recordingSettingsQuery = recordingDeviceSettingsStore.createQuery();
 	const generalSettings = generalSettingsStore.createQuery();
-	const serverUrl = createMemo(
-		() => generalSettings.data?.serverUrl ?? clientEnv.VITE_SERVER_URL,
-	);
 	const deviceSettings = createMemo(
 		() => recordingSettingsQuery.data as RecordingDeviceSettingsStore | null,
 	);
@@ -2703,8 +2691,6 @@ function Page() {
 		}
 	});
 
-	const license = createLicenseQuery();
-
 	const signIn = createSignInMutation();
 	const stopRecording = createMutation(() => ({
 		mutationFn: async () => {
@@ -3145,42 +3131,13 @@ function Page() {
 						when={editorRecordingFlow()}
 						fallback={
 							<div class="flex items-center space-x-1">
-								<a
-									class="*:w-[92px] *:h-auto text-(--text-primary)"
-									target="_blank"
-									href={
-										auth.data
-											? new URL("/dashboard", serverUrl()).toString()
-											: serverUrl()
-									}
-								>
+								<div class="*:w-[92px] *:h-auto text-(--text-primary)">
 									<IconCapLogoFullDark class="hidden dark:block" />
 									<IconCapLogoFull class="block dark:hidden" />
-								</a>
-								<ErrorBoundary fallback={null}>
-									<Suspense>
-										<Show
-											when={license.data?.type !== "pro"}
-											fallback={
-												<span class="text-[0.6rem] ml-2 rounded-lg border border-gray-5 px-1 py-0.5 bg-(--blue-400) text-gray-1 dark:text-gray-12">
-													{license.data?.type === "commercial"
-														? "Commercial"
-														: "Pro"}
-												</span>
-											}
-										>
-											<button
-												type="button"
-												onClick={() => {
-													void commands.showWindow("Upgrade");
-												}}
-												class="text-[0.6rem] ml-2 rounded-lg border border-gray-5 px-1 py-0.5 bg-gray-3 hover:bg-gray-5"
-											>
-												Personal
-											</button>
-										</Show>
-									</Suspense>
-								</ErrorBoundary>
+								</div>
+								<span class="text-[0.6rem] ml-2 rounded-lg border border-gray-5 px-1 py-0.5">
+									Local
+								</span>
 							</div>
 						}
 					>

@@ -834,79 +834,16 @@ fn nv12_from_rendered_frame(frame: Nv12RenderedFrame) -> ExportFrame {
     let width = frame.width;
     let height = frame.height;
 
-    let mut rgba_frame = ffmpeg::frame::Video::new(ffmpeg::format::Pixel::RGBA, width, height);
-    let stride = rgba_frame.stride(0);
-    let src_stride = frame.y_stride as usize;
-    for row in 0..height as usize {
-        let src_start = row * src_stride;
-        let dst_start = row * stride;
-        let copy_width = (width as usize * 4).min(stride).min(src_stride);
-        if src_start + copy_width <= frame.data.len()
-            && dst_start + copy_width <= rgba_frame.data_mut(0).len()
-        {
-            rgba_frame.data_mut(0)[dst_start..dst_start + copy_width]
-                .copy_from_slice(&frame.data[src_start..src_start + copy_width]);
-        }
-    }
-
-    if let Ok(mut converter) = ffmpeg::software::scaling::Context::get(
-        ffmpeg::format::Pixel::RGBA,
-        width,
-        height,
-        ffmpeg::format::Pixel::NV12,
-        width,
-        height,
-        ffmpeg::software::scaling::flag::Flags::FAST_BILINEAR,
-    ) {
-        let mut nv12_frame = ffmpeg::frame::Video::new(ffmpeg::format::Pixel::NV12, width, height);
-        if converter.run(&rgba_frame, &mut nv12_frame).is_ok() {
-            let y_size = nv12_frame.stride(0) * height as usize;
-            let uv_size = nv12_frame.stride(1) * (height as usize / 2);
-            let y_data = &nv12_frame.data(0)[..y_size];
-            let uv_data = &nv12_frame.data(1)[..uv_size];
-            let mut result = Vec::with_capacity(width as usize * height as usize * 3 / 2);
-
-            if nv12_frame.stride(0) == width as usize {
-                result.extend_from_slice(y_data);
-            } else {
-                for row in 0..height as usize {
-                    let start = row * nv12_frame.stride(0);
-                    result.extend_from_slice(&y_data[start..start + width as usize]);
-                }
-            }
-
-            if nv12_frame.stride(1) == width as usize {
-                result.extend_from_slice(uv_data);
-            } else {
-                for row in 0..(height as usize / 2) {
-                    let start = row * nv12_frame.stride(1);
-                    result.extend_from_slice(&uv_data[start..start + width as usize]);
-                }
-            }
-
-            return ExportFrame {
-                payload: ExportFramePayload::Cpu(SharedNv12Buffer::from_vec(result)),
-                width,
-                height,
-                y_stride: width,
-                frame_number: frame.frame_number,
-                timeline_frame: frame.frame_number,
-            };
-        }
-    }
-
-    tracing::error!(
-        frame_number = frame.frame_number,
-        "swscale RGBA to NV12 conversion failed, using zeroed NV12"
+    let mut data = vec![0; width as usize * height as usize * 3 / 2];
+    cap_rendering::cpu_yuv::rgba_to_nv12(
+        &frame.data,
+        frame.y_stride as usize,
+        width as usize,
+        height as usize,
+        &mut data,
     );
     ExportFrame {
-        payload: ExportFramePayload::Cpu(SharedNv12Buffer::from_vec(vec![
-            0u8;
-            width as usize
-                * height as usize
-                * 3
-                / 2
-        ])),
+        payload: ExportFramePayload::Cpu(SharedNv12Buffer::from_vec(data)),
         width,
         height,
         y_stride: width,

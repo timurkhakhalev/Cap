@@ -1,3 +1,4 @@
+use super::configure_rgb_converter;
 use std::{thread, time::Duration};
 
 use cap_media_info::{Pixel, VideoInfo, ensure_even};
@@ -618,44 +619,6 @@ pub(crate) fn open_video_encoder_with_flags(
     )
 }
 
-fn is_rgb(format: format::Pixel) -> bool {
-    format.descriptor().is_some_and(|descriptor| unsafe {
-        (*descriptor.as_ptr()).flags & ffmpeg::ffi::AV_PIX_FMT_FLAG_RGB as u64 != 0
-    })
-}
-
-fn configure_rgb_converter(
-    converter: &mut ffmpeg::software::scaling::Context,
-    input: format::Pixel,
-    output: format::Pixel,
-) -> Result<(), H264EncoderError> {
-    if !is_rgb(input) || is_rgb(output) {
-        return Ok(());
-    }
-
-    // swscale defaults to BT.601 even though the encoder declares BT.709.
-    // RGB input is full range; the encoded YUV contract below is limited range.
-    let result = unsafe {
-        let coefficients = ffmpeg::ffi::sws_getCoefficients(ffmpeg::ffi::SWS_CS_ITU709);
-        ffmpeg::ffi::sws_setColorspaceDetails(
-            converter.as_mut_ptr(),
-            coefficients,
-            1,
-            coefficients,
-            0,
-            0,
-            1 << 16,
-            1 << 16,
-        )
-    };
-    if result < 0 {
-        return Err(H264EncoderError::ColorConversion(ffmpeg::Error::from(
-            result,
-        )));
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn open_video_encoder_inner(
     codec: Codec,
@@ -739,7 +702,8 @@ fn open_video_encoder_inner(
             flags,
         ) {
             Ok(mut context) => {
-                configure_rgb_converter(&mut context, input_config.pixel_format, output_format)?;
+                configure_rgb_converter(&mut context, input_config.pixel_format, output_format)
+                    .map_err(H264EncoderError::ColorConversion)?;
                 debug!(
                     encoder = %codec.name(),
                     src_format = ?input_config.pixel_format,
@@ -1357,6 +1321,9 @@ fn get_codec_and_options(
             _ => {}
         }
 
+        if is_export {
+            options.set("color_trc", "iec61966-2-1");
+        }
         encoders.push((codec, options));
     }
 
@@ -1768,6 +1735,56 @@ mod self_test_tests {
 #[cfg(test)]
 mod rgb_color_tests {
     use super::*;
+    use crate::video::is_rgb;
+
+    #[test]
+    fn rgb_software_export_declares_srgb_in_the_encoded_stream() {
+        ffmpeg::init().unwrap();
+        let config = VideoInfo::from_raw_ffmpeg(format::Pixel::RGBA, 192, 64, 30);
+        let (codec, options) = get_codec_and_options(
+            &config,
+            H264Preset::Ultrafast,
+            Some(&["libx264"]),
+            true,
+            Some(18),
+        )
+        .into_iter()
+        .next()
+        .unwrap();
+        let mut opened =
+            open_video_encoder(codec, options, &config, 192, 64, 0.3, false, Some(18)).unwrap();
+        let mut yuv = frame::Video::empty();
+        opened
+            .converter
+            .as_mut()
+            .unwrap()
+            .run(&rgb_bars(format::Pixel::RGBA), &mut yuv)
+            .unwrap();
+        yuv.set_pts(Some(0));
+        opened.encoder.send_frame(&yuv).unwrap();
+        let mut packets = Vec::new();
+        receive_packets(&mut opened.encoder, &mut packets);
+        opened.encoder.send_eof().unwrap();
+        receive_packets(&mut opened.encoder, &mut packets);
+        let mut decoder = context::Context::new_with_codec(
+            ffmpeg::decoder::find(ffmpeg::codec::Id::H264).unwrap(),
+        )
+        .decoder()
+        .video()
+        .unwrap();
+        let mut frames = Vec::new();
+        for packet in packets {
+            decoder.send_packet(&packet).unwrap();
+            receive_frames(&mut decoder, &mut frames);
+        }
+        decoder.send_eof().unwrap();
+        receive_frames(&mut decoder, &mut frames);
+        assert!(!frames.is_empty());
+        assert_eq!(
+            frames[0].color_transfer_characteristic(),
+            color::TransferCharacteristic::IEC61966_2_1
+        );
+    }
 
     const COLORS: [[u8; 3]; 6] = [
         [255, 0, 0],

@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "Cap - Development",
-	"identifier": "so.cap.desktop.dev",
-	"mainBinaryName": "Cap - Development",
+	"productName": "Cap Local",
+	"identifier": "so.cap.local",
+	"mainBinaryName": "CapLocal",
 	"build": {
 		"beforeDevCommand": "bun run localdev",
 		"devUrl": "http://localhost:3002",
@@ -33,16 +33,19 @@
 		}
 	},
 	"plugins": {
-		"updater": { "active": false, "pubkey": "" },
+		"updater": {
+			"active": false,
+			"pubkey": ""
+		},
 		"deep-link": {
 			"desktop": {
-				"schemes": ["cap-desktop"]
+				"schemes": ["cap-local"]
 			}
 		}
 	},
 	"bundle": {
 		"active": true,
-		"createUpdaterArtifacts": true,
+		"createUpdaterArtifacts": false,
 		"targets": "all",
 		"externalBin": [
 			"binaries/cap-muxer",

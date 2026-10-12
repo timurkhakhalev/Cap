@@ -1,0 +1,97 @@
+name: Cap Local macOS
+
+on:
+  push:
+    branches: ["local/color-and-unlocked-desktop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cap-local-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_RELEASE_DEBUG: 0
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+      CARGO_PROFILE_RELEASE_INCREMENTAL: "true"
+      RUST_TARGET_TRIPLE: aarch64-apple-darwin
+      VITE_ENVIRONMENT: production
+      VITE_SERVER_URL: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.CARGO_HOME }}/bin
+            ${{ env.CARGO_HOME }}/.crates.toml
+            ${{ env.CARGO_HOME }}/.crates2.json
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
+            ${{ github.workspace }}/target
+          key: cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-${{ github.sha }}
+          restore-keys: |
+            cap-local-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/cap-local-macos.yml') }}-
+            cap-local-v2-${{ runner.os }}-${{ runner.arch }}-
+            v0-rust-cap-local-macos-release-Darwin-arm64-
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Prepare native dependencies
+        run: node scripts/setup.js
+      - name: Prepare framework layout for native test executables
+        run: |
+          mkdir -p target/aarch64-apple-darwin/release/Frameworks
+          ln -sfn "$GITHUB_WORKSPACE/target/Frameworks/Spacedrive.framework" target/aarch64-apple-darwin/release/Frameworks/Spacedrive.framework
+      - name: Test color transfers and CPU conversion
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib color::tests -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib cpu_yuv::tests -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib rgb_software -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-enc-ffmpeg --lib prores_software -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-project --lib portrait_camera_shape -- --nocapture
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-rendering --lib portrait_camera_crop -- --nocapture
+      - name: Build independent app
+        run: |
+          touch .env
+          bun run tauri:build --target aarch64-apple-darwin --bundles app
+          bun run tsc --noEmit -p apps/desktop/tsconfig.json
+          bun run --cwd apps/desktop vitest run src/components/CameraPreviewChrome.test.ts
+      - name: Test camera preview geometry
+        run: |
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib camera_window_minimum_allows_every_preview_shape_at_minimum_size
+          cargo test --locked --release --target aarch64-apple-darwin -p cap-desktop --lib portrait_preview_has_a_fixed_vertical_aspect_and_keeps_the_short_side_size
+      - name: Check affected Rust crates
+        run: cargo check --locked --release --target aarch64-apple-darwin -p cap-rendering -p cap-recording -p cap-export -p cap-enc-ffmpeg -p cap -p cap-desktop
+      - name: Package app and native color tests
+        run: |
+          mkdir -p artifacts
+          cp apps/desktop/src/utils/tauri.ts artifacts/tauri.ts
+          cp packages/ui-solid/src/auto-imports.d.ts artifacts/auto-imports.d.ts
+          ditto -c -k --sequesterRsrc --keepParent 'target/aarch64-apple-darwin/release/bundle/macos/Cap Local.app' 'artifacts/Cap Local.zip'
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil
+          candidates = [path for path in Path('target/aarch64-apple-darwin/release/deps').glob('cap_rendering-*') if path.is_file() and os.access(path, os.X_OK) and path.suffix == '']
+          assert len(candidates) == 1, candidates
+          shutil.copy2(candidates[0], 'artifacts/cap-color-tests')
+          PY
+          shasum -a 256 'artifacts/Cap Local.zip' artifacts/cap-color-tests > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cap-local-macos-arm64
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: error

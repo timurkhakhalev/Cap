@@ -570,6 +570,11 @@ pub enum CameraShape {
     #[default]
     Square,
     Source,
+    Portrait,
+}
+
+impl CameraShape {
+    pub const PORTRAIT_ASPECT_RATIO: f32 = 9.0 / 16.0;
 }
 
 impl Camera {
@@ -3117,6 +3122,18 @@ mod tests {
             serde_json::from_str(r#"{"improve":true,"isolation":"strong"}"#).unwrap();
         assert_eq!(old.filters, AudioFilters::default());
         assert!(old.improve);
+    }
+
+    #[test]
+    fn portrait_camera_shape_round_trips() {
+        let camera = Camera {
+            shape: CameraShape::Portrait,
+            ..Camera::default()
+        };
+        let value = serde_json::to_value(&camera).unwrap();
+        assert_eq!(value["shape"], "portrait");
+        let decoded: Camera = serde_json::from_value(value).unwrap();
+        assert!(matches!(decoded.shape, CameraShape::Portrait));
     }
 
     #[test]
