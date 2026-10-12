@@ -9,7 +9,11 @@ export default defineConfig({
 	},
 	test: {
 		environment: "jsdom",
-		include: ["src/routes/editor/AudioFiltersCard.test.tsx"],
+		include: [
+			"src/routes/editor/AudioFiltersCard.test.tsx",
+			"src/routes/editor/audio-tuning.test.tsx",
+			"src/routes/editor/playback-loop.test.ts",
+		],
 		maxWorkers: 1,
 		fileParallelism: false,
 	},

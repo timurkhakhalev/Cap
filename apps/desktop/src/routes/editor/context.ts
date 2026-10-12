@@ -1853,6 +1853,7 @@ export const [EditorContextProvider, useBaseEditorContext] =
 			const preparing = usePreparingEditor();
 			const [editorState, setEditorState] = createStore({
 				audioPreviewBypass: false,
+				playbackLoop: { enabled: false, start: 0, end: 0 },
 				styleEditIndex: null as number | null,
 				importingImage: false,
 				previewTime: null as number | null,

@@ -11,6 +11,7 @@ import {
 	createSignal,
 	For,
 	on,
+	onCleanup,
 	onMount,
 	Show,
 	untrack,
@@ -32,6 +33,7 @@ import { FrameButton } from "./FrameButton";
 import { ImageOverlay } from "./image-overlay";
 import { MaskOverlay } from "./MaskOverlay";
 import { PerformanceOverlay } from "./PerformanceOverlay";
+import { createLoopRestart, loopRange, loopRestartTime } from "./playback-loop";
 import { usePreparingEditor } from "./preparing-editor-context";
 import { PreparingFrame } from "./preparing-frame";
 import {
@@ -254,7 +256,50 @@ export function PlayerContent(props: { compactness?: number }) {
 		}
 	};
 
+	const activeLoop = () => loopRange(editorState.playbackLoop, totalDuration());
+	const [loopRestarting, setLoopRestarting] = createSignal(false);
+	const loopRestart = createLoopRestart({
+		stop: () => commands.stopPlayback(),
+		seek: (seconds) => commands.seekTo(Math.floor(seconds * FPS)),
+		start: () => commands.startPlayback(FPS, previewResolutionBase()),
+		active: () => playbackIntent(),
+		position: (seconds) => {
+			setEditorState("playbackTime", seconds);
+			setEditorState("previewTime", null);
+		},
+		failed: (error) => {
+			console.error("Could not repeat preview range:", error);
+			setEditorState("playing", false);
+		},
+	});
+	onCleanup(() => loopRestart.cancel());
 	createEffect(() => {
+		const range = activeLoop();
+		if (range && playbackIntent()) {
+			if (loopRestarting() || handoffPlaybackPending()) return;
+			const target = loopRestartTime(
+				editorState.playbackLoop,
+				totalDuration(),
+				editorState.playbackTime,
+				FPS,
+			);
+			if (target !== undefined) {
+				setLoopRestarting(true);
+				const pending = requestHandoffPlayback(true, target);
+				const restart = pending ?? loopRestart.restart(target);
+				void restart
+					.then((accepted) => {
+						if (accepted === false && playbackIntent())
+							setEditorState("playbackLoop", "enabled", false);
+					})
+					.catch((error) => {
+						console.error("Could not repeat preview range:", error);
+						setEditorState("playbackLoop", "enabled", false);
+					})
+					.finally(() => setLoopRestarting(false));
+			}
+			return;
+		}
 		if (isAtEnd() && playbackIntent()) {
 			const pending = requestHandoffPlayback(false);
 			if (pending) return;
@@ -264,28 +309,39 @@ export function PlayerContent(props: { compactness?: number }) {
 	});
 
 	const handlePlayPauseClick = async () => {
-		const pending = requestHandoffPlayback(
-			isAtEnd() || !playbackIntent(),
-			isAtEnd() ? 0 : undefined,
-		);
+		loopRestart.cancel();
+		if (loopRestarting() && playbackIntent()) {
+			setEditorState("playing", false);
+			const pending = requestHandoffPlayback(false);
+			await (pending ?? commands.stopPlayback());
+			return;
+		}
+		const replayFromEnd = isAtEnd() && !activeLoop();
+		const shouldPlay = replayFromEnd || !playbackIntent();
+		const target = shouldPlay
+			? (loopRestartTime(
+					editorState.playbackLoop,
+					totalDuration(),
+					editorState.playbackTime,
+					FPS,
+				) ?? (replayFromEnd ? 0 : editorState.playbackTime))
+			: undefined;
+		const pending = requestHandoffPlayback(shouldPlay, target);
 		if (pending) {
 			await pending;
 			return;
 		}
 		try {
-			if (isAtEnd()) {
+			if (shouldPlay) {
 				await commands.stopPlayback();
-				setEditorState("playbackTime", 0);
-				await commands.seekTo(0);
+				const seconds = target ?? editorState.playbackTime;
+				setEditorState("playbackTime", seconds);
+				await commands.seekTo(Math.floor(seconds * FPS));
 				await commands.startPlayback(FPS, previewResolutionBase());
 				setEditorState("playing", true);
-			} else if (editorState.playing) {
-				await commands.stopPlayback();
-				setEditorState("playing", false);
 			} else {
-				await commands.seekTo(Math.floor(editorState.playbackTime * FPS));
-				await commands.startPlayback(FPS, previewResolutionBase());
-				setEditorState("playing", true);
+				setEditorState("playing", false);
+				await commands.stopPlayback();
 			}
 			if (editorState.playing) setEditorState("previewTime", null);
 		} catch (error) {
@@ -443,6 +499,19 @@ export function PlayerContent(props: { compactness?: number }) {
 					/>
 					<span class="text-[13px] tabular-nums text-ed-text-3"> / </span>
 					<Time seconds={totalDuration()} />
+					<Show when={activeLoop()}>
+						{(range) => (
+							<button
+								type="button"
+								class="ml-2 text-xs text-ed-accent"
+								title="Turn off loop preview"
+								aria-label="Turn off loop preview"
+								onClick={() => setEditorState("playbackLoop", "enabled", false)}
+							>
+								Loop {formatTime(range().start)}–{formatTime(range().end)}
+							</button>
+						)}
+					</Show>
 				</div>
 				<div class="flex flex-row flex-none gap-3.5 items-center">
 					<button
@@ -469,7 +538,7 @@ export function PlayerContent(props: { compactness?: number }) {
 							onClick={handlePlayPauseClick}
 							class="flex justify-center items-center rounded-full transition-opacity size-8 bg-ed-text-1 text-ed-card hover:opacity-90"
 						>
-							{!playbackIntent() || isAtEnd() ? (
+							{!playbackIntent() || (isAtEnd() && !activeLoop()) ? (
 								<IconCapPlay class="size-3" />
 							) : (
 								<IconCapPause class="size-3" />

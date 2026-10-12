@@ -47,8 +47,10 @@ import { Toggle } from "~/components/Toggle";
 import {
 	animatedGradientsStore,
 	audioEnhancementStore,
+	audioPresetsStore,
 	generalSettingsStore,
 } from "~/store";
+import { audioPresetSettings } from "~/utils/audio-presets";
 import {
 	createSelectedOrganization,
 	getOrganizationBrandColorSwatches,
@@ -88,6 +90,8 @@ import {
 } from "./AnimatedGradientEditor";
 import { AudioFiltersCard } from "./AudioFiltersCard";
 import { AudioLibraryPanel } from "./AudioLibrary";
+import { AudioLoopControls } from "./AudioLoopControls";
+import { AudioPresets } from "./AudioPresets";
 import {
 	AUDIO_TRACK_BG_CLASS,
 	type AudioTrackSegment,
@@ -450,9 +454,10 @@ export function ConfigSidebar() {
 }
 
 function StudioSoundCard() {
-	const { project, setProject, editorState, setEditorState } =
+	const { project, setProject, editorState, setEditorState, totalDuration } =
 		useEditorContext();
 	const [savingDefault, setSavingDefault] = createSignal(false);
+	const presets = audioPresetsStore.createQuery();
 	return (
 		<AudioFiltersCard
 			audio={project.audio}
@@ -480,7 +485,57 @@ function StudioSoundCard() {
 					setSavingDefault(false);
 				}
 			}}
-		/>
+		>
+			<AudioPresets
+				audio={project.audio}
+				presets={presets.data?.presets ?? []}
+				loading={presets.isPending || presets.isError}
+				onApply={(preset) => {
+					setEditorState("audioPreviewBypass", false);
+					setProject("audio", {
+						...preset.audio,
+						filters: { ...preset.audio.filters },
+					});
+				}}
+				onSave={async (name) => {
+					const audio = audioPresetSettings(project.audio);
+					const saved = (await audioPresetsStore.get())?.presets ?? [];
+					if (
+						saved.some(
+							(preset) =>
+								preset.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+						)
+					)
+						throw new Error("Duplicate preset name");
+					await audioPresetsStore.set({
+						presets: [...saved, { id: crypto.randomUUID(), name, audio }],
+					});
+					await presets.refetch();
+				}}
+				onDelete={async (id) => {
+					const saved = (await audioPresetsStore.get())?.presets ?? [];
+					await audioPresetsStore.set({
+						presets: saved.filter((preset) => preset.id !== id),
+					});
+					await presets.refetch();
+				}}
+			/>
+			<Show when={presets.isError}>
+				<button
+					type="button"
+					class="mt-2 text-xs text-ed-accent"
+					onClick={() => presets.refetch()}
+				>
+					Could not load presets. Retry
+				</button>
+			</Show>
+			<AudioLoopControls
+				loop={editorState.playbackLoop}
+				duration={totalDuration()}
+				playhead={editorState.playbackTime}
+				onChange={(loop) => setEditorState("playbackLoop", loop)}
+			/>
+		</AudioFiltersCard>
 	);
 }
 

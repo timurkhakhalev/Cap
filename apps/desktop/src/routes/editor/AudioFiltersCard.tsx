@@ -93,6 +93,7 @@ export function AudioFiltersCard(props: {
 	onChange(patch: Partial<AudioConfiguration>): void;
 	onSaveDefault(): void;
 	savingDefault: boolean;
+	children?: JSX.Element;
 }) {
 	const filters = () => props.audio.filters;
 	const update = (patch: Partial<AudioFilters>) =>
@@ -122,6 +123,7 @@ export function AudioFiltersCard(props: {
 					onChange={(improve) => props.onChange({ improve })}
 				/>
 			</div>
+			{props.children}
 			<Show when={!props.audio.improve}>
 				<p class="mt-3 text-xs text-ed-text-2">
 					Processing is off. Your filter settings are kept.
@@ -157,137 +159,144 @@ export function AudioFiltersCard(props: {
 						Turn on Peak protection to keep peaks under control.
 					</p>
 				</Show>
-				<button
-					type="button"
-					class="mt-3 mb-2 text-xs text-ed-accent hover:underline focus-visible:outline focus-visible:outline-ed-accent"
-					onClick={() =>
-						props.onChange({
-							filters: { ...studioSoundFilters },
-							isolation: "balanced",
-						})
-					}
-				>
-					Reset to Studio Sound
-				</button>
-				<Filter
-					title="Noise reduction"
-					description="Reduce steady background noise."
-					enabled={filters().noiseReduction}
-					onChange={(noiseReduction) => update({ noiseReduction })}
-				>
-					<div
-						class="flex rounded-lg bg-ed-ctl p-0.5"
-						role="group"
-						aria-label="Noise reduction strength"
+				<details class="mt-3">
+					<summary class="cursor-pointer py-2 text-xs font-medium text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent">
+						Advanced tuning
+					</summary>
+					<button
+						type="button"
+						class="mt-3 mb-2 text-xs text-ed-accent hover:underline focus-visible:outline focus-visible:outline-ed-accent"
+						onClick={() =>
+							props.onChange({
+								filters: { ...studioSoundFilters },
+								isolation: "balanced",
+							})
+						}
 					>
-						<For each={strengths}>
-							{(strength) => (
-								<button
-									type="button"
-									aria-pressed={props.audio.isolation === strength.value}
-									class="flex-1 rounded-md py-1.5 text-xs text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent"
-									classList={{
-										"bg-ed-card text-ed-text-1":
-											props.audio.isolation === strength.value,
-									}}
-									onClick={() => props.onChange({ isolation: strength.value })}
-								>
-									{strength.label}
-								</button>
-							)}
-						</For>
-					</div>
-					<Show when={props.audio.isolation === "strong"}>
-						<p class="mt-2 text-xs text-ed-text-3">
-							Strong reduction may change the texture of your voice.
-						</p>
-					</Show>
-				</Filter>
-				<Filter
-					title="Auto volume"
-					description="Bring quiet speech to a consistent level."
-					enabled={filters().autoLevel}
-					onChange={(autoLevel) => update({ autoLevel })}
-				>
-					<Parameter
-						label="Voice level"
-						value={filters().targetLufs}
-						min={-30}
-						max={-10}
-						step={1}
-						unit="LUFS"
-						onChange={(targetLufs) => update({ targetLufs })}
-					/>
-				</Filter>
-				<Filter
-					title="Compressor"
-					description="Soften loud words and even out your voice."
-					enabled={filters().compressor}
-					onChange={(compressor) => update({ compressor })}
-				>
-					<Parameter
-						label="Threshold"
-						value={filters().thresholdDb}
-						min={-60}
-						max={0}
-						step={1}
-						unit="dB"
-						onChange={(thresholdDb) => update({ thresholdDb })}
-					/>
-					<p class="text-xs text-ed-text-3">
-						Sound above this level is reduced.
-					</p>
-					<Parameter
-						label="Compression"
-						value={filters().ratio}
-						min={1}
-						max={20}
-						step={0.5}
-						unit=":1"
-						onChange={(ratio) => update({ ratio })}
-					/>
-					<details class="mt-2 text-xs text-ed-text-2">
-						<summary class="cursor-pointer py-1">Timing settings</summary>
+						Reset to Studio Sound
+					</button>
+					<Filter
+						title="Noise reduction"
+						description="Reduce steady background noise."
+						enabled={filters().noiseReduction}
+						onChange={(noiseReduction) => update({ noiseReduction })}
+					>
+						<div
+							class="flex rounded-lg bg-ed-ctl p-0.5"
+							role="group"
+							aria-label="Noise reduction strength"
+						>
+							<For each={strengths}>
+								{(strength) => (
+									<button
+										type="button"
+										aria-pressed={props.audio.isolation === strength.value}
+										class="flex-1 rounded-md py-1.5 text-xs text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent"
+										classList={{
+											"bg-ed-card text-ed-text-1":
+												props.audio.isolation === strength.value,
+										}}
+										onClick={() =>
+											props.onChange({ isolation: strength.value })
+										}
+									>
+										{strength.label}
+									</button>
+								)}
+							</For>
+						</div>
+						<Show when={props.audio.isolation === "strong"}>
+							<p class="mt-2 text-xs text-ed-text-3">
+								Strong reduction may change the texture of your voice.
+							</p>
+						</Show>
+					</Filter>
+					<Filter
+						title="Auto volume"
+						description="Bring quiet speech to a consistent level."
+						enabled={filters().autoLevel}
+						onChange={(autoLevel) => update({ autoLevel })}
+					>
 						<Parameter
-							label="Attack"
-							value={filters().attackMs}
-							min={1}
-							max={100}
+							label="Voice level"
+							value={filters().targetLufs}
+							min={-30}
+							max={-10}
 							step={1}
-							unit="ms"
-							onChange={(attackMs) => update({ attackMs })}
+							unit="LUFS"
+							onChange={(targetLufs) => update({ targetLufs })}
 						/>
+					</Filter>
+					<Filter
+						title="Compressor"
+						description="Soften loud words and even out your voice."
+						enabled={filters().compressor}
+						onChange={(compressor) => update({ compressor })}
+					>
 						<Parameter
-							label="Release"
-							value={filters().releaseMs}
-							min={10}
-							max={1000}
-							step={10}
-							unit="ms"
-							onChange={(releaseMs) => update({ releaseMs })}
+							label="Threshold"
+							value={filters().thresholdDb}
+							min={-60}
+							max={0}
+							step={1}
+							unit="dB"
+							onChange={(thresholdDb) => update({ thresholdDb })}
 						/>
-					</details>
-				</Filter>
-				<Filter
-					title="Peak protection"
-					description="Limit loud peaks after microphone volume."
-					enabled={filters().limiter}
-					onChange={(limiter) => update({ limiter })}
-				>
-					<Parameter
-						label="Maximum level"
-						value={filters().ceilingDb}
-						min={-12}
-						max={-0.1}
-						step={0.1}
-						unit="dB"
-						onChange={(ceilingDb) => update({ ceilingDb })}
-					/>
-					<p class="mt-2 text-xs text-ed-text-2">
-						Protects the microphone. Clip volume and other tracks can still
-						raise final peaks.
-					</p>
-				</Filter>
+						<p class="text-xs text-ed-text-3">
+							Sound above this level is reduced.
+						</p>
+						<Parameter
+							label="Compression"
+							value={filters().ratio}
+							min={1}
+							max={20}
+							step={0.5}
+							unit=":1"
+							onChange={(ratio) => update({ ratio })}
+						/>
+						<details class="mt-2 text-xs text-ed-text-2">
+							<summary class="cursor-pointer py-1">Timing settings</summary>
+							<Parameter
+								label="Attack"
+								value={filters().attackMs}
+								min={1}
+								max={100}
+								step={1}
+								unit="ms"
+								onChange={(attackMs) => update({ attackMs })}
+							/>
+							<Parameter
+								label="Release"
+								value={filters().releaseMs}
+								min={10}
+								max={1000}
+								step={10}
+								unit="ms"
+								onChange={(releaseMs) => update({ releaseMs })}
+							/>
+						</details>
+					</Filter>
+					<Filter
+						title="Peak protection"
+						description="Limit loud peaks after microphone volume."
+						enabled={filters().limiter}
+						onChange={(limiter) => update({ limiter })}
+					>
+						<Parameter
+							label="Maximum level"
+							value={filters().ceilingDb}
+							min={-12}
+							max={-0.1}
+							step={0.1}
+							unit="dB"
+							onChange={(ceilingDb) => update({ ceilingDb })}
+						/>
+						<p class="mt-2 text-xs text-ed-text-2">
+							Protects the microphone. Clip volume and other tracks can still
+							raise final peaks.
+						</p>
+					</Filter>
+				</details>
 			</Show>
 			<button
 				type="button"

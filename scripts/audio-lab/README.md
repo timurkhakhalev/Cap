@@ -4,6 +4,18 @@ Local regression and listening bench for post-recording microphone processing.
 It calls the real `cap-editor` preview and streaming export PCM paths. It never
 launches Cap or writes into the source recording.
 
+## Editor tuning
+
+The audio panel keeps detailed filter controls under **Advanced tuning**.
+Named audio presets are saved in the local application store and can be applied
+to other recordings. They include processing, noise strength, filter parameters
+and microphone gain; muting and other audio tracks stay unchanged.
+
+**Loop preview** repeats an output-timeline range. Set its boundaries in seconds
+or use the playhead, then press Play. The player shows the active range and can
+turn repetition off. Loops are temporary editor state and never affect exports.
+Playback restarts at each boundary, so this is not a gapless audio loop.
+
 ## Prepare once
 
 Requires `uv`, FFmpeg/ffprobe, Bun, and the repository's Rust toolchain. Python

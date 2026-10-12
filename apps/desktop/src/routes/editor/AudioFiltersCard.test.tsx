@@ -81,6 +81,12 @@ it("disables filters independently and keeps settings when processing is off", (
 it("bounds numeric changes and hides advanced timing initially", () => {
 	const { audio } = mount();
 	expect(document.querySelector("details")?.open).toBe(false);
+	expect(document.querySelector("summary")?.textContent).toBe(
+		"Advanced tuning",
+	);
+	const advanced = document.querySelector("details") as HTMLDetailsElement;
+	expect(numeric("Threshold").closest("details")).toBe(advanced);
+	advanced.open = true;
 	const threshold = numeric("Threshold");
 	threshold.value = "-28";
 	threshold.dispatchEvent(new Event("change", { bubbles: true }));
