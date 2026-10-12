@@ -78,6 +78,19 @@ export const cameraPreviewDimensions = (
 	};
 };
 
+export function cameraResizeSize(
+	size: number,
+	dimensions: { width: number; height: number },
+	corner: ResizeCorner,
+	delta: { x: number; y: number },
+) {
+	const dx =
+		(delta.x * (corner.includes("e") ? 1 : -1) * size) / dimensions.width;
+	const dy =
+		(delta.y * (corner.includes("s") ? 1 : -1) * size) / dimensions.height;
+	return clampCameraSize(size + (Math.abs(dx) > Math.abs(dy) ? dx : dy));
+}
+
 export const normalizeBackgroundBlurMode = (
 	mode: BackgroundBlurMode | boolean | undefined,
 ): BackgroundBlurMode => {
@@ -250,19 +263,26 @@ export function CameraResizeHandles(props: {
 		size: 0,
 		x: 0,
 		y: 0,
+		width: 0,
+		height: 0,
 		corner: "nw" as ResizeCorner,
 	});
+	let handlesRef: HTMLDivElement | undefined;
 
 	const handleResizeStart = (corner: ResizeCorner) => (e: MouseEvent) => {
-		if (e.button !== 0) return;
+		if (e.button !== 0 || !handlesRef) return;
+		const { width, height } = handlesRef.getBoundingClientRect();
+		if (width <= 0 || height <= 0) return;
 		e.preventDefault();
 		e.stopPropagation();
 		setIsResizing(true);
 		setActiveCorner(corner);
 		setResizeStart({
 			size: props.state.size,
-			x: e.clientX,
-			y: e.clientY,
+			x: e.screenX,
+			y: e.screenY,
+			width,
+			height,
 			corner,
 		});
 	};
@@ -270,20 +290,13 @@ export function CameraResizeHandles(props: {
 	const handleResizeMove = (e: MouseEvent) => {
 		if (!isResizing()) return;
 		const start = resizeStart();
-		const deltaX = e.clientX - start.x;
-		const deltaY = e.clientY - start.y;
-
-		const hasE = start.corner.includes("e");
-		const hasW = start.corner.includes("w");
-		const hasS = start.corner.includes("s");
-		const hasN = start.corner.includes("n");
-
-		const dx = hasE ? deltaX : hasW ? -deltaX : 0;
-		const dy = hasS ? deltaY : hasN ? -deltaY : 0;
-
-		const delta = (hasE || hasW) && (hasN || hasS) ? Math.max(dx, dy) : dx + dy;
-
-		props.setState("size", clampCameraSize(start.size + delta));
+		props.setState(
+			"size",
+			cameraResizeSize(start.size, start, start.corner, {
+				x: e.screenX - start.x,
+				y: e.screenY - start.y,
+			}),
+		);
 	};
 
 	const handleResizeEnd = () => {
@@ -295,14 +308,17 @@ export function CameraResizeHandles(props: {
 		if (!isResizing()) return;
 		window.addEventListener("mousemove", handleResizeMove);
 		window.addEventListener("mouseup", handleResizeEnd);
+		window.addEventListener("blur", handleResizeEnd);
 		onCleanup(() => {
 			window.removeEventListener("mousemove", handleResizeMove);
 			window.removeEventListener("mouseup", handleResizeEnd);
+			window.removeEventListener("blur", handleResizeEnd);
 		});
 	});
 
 	return (
 		<div
+			ref={handlesRef}
 			class="pointer-events-none absolute inset-x-0 bottom-0 z-20"
 			style={{ top: `${props.toolbarHeight}px` }}
 		>
