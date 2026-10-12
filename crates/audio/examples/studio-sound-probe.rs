@@ -68,11 +68,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let seed =
         AudioData::from_file_range(&path, 0, VOICE_PROFILE_SAMPLES).map_err(io::Error::other)?;
-    let profile = VoiceProfile::analyze(&seed);
+    let profile = VoiceProfile::analyze(&seed, cap_project::AudioFilters::default());
     let channels = seed.channels();
     drop(seed);
     let calibration_ms = started.elapsed().as_secs_f64() * 1000.0;
-    let mut enhancer = VoiceEnhancer::with_settings(channels, strength, profile);
+    let mut enhancer = VoiceEnhancer::with_settings(
+        channels,
+        strength,
+        profile,
+        cap_project::AudioFilters::default(),
+        0.0,
+    );
     let mut stream = AudioStream::open(&path, Arc::new(AtomicBool::new(false)))?;
     let mut window = Window {
         samples: Vec::new(),

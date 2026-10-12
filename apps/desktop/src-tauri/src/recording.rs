@@ -6525,9 +6525,15 @@ fn apply_studio_sound_default(app: &AppHandle, config: &mut ProjectConfiguration
     {
         config.audio.improve = true;
         config.audio.isolation = audio_enhancement
+            .as_ref()
             .and_then(|value| value.get("isolation").cloned())
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        config.audio.filters = audio_enhancement
+            .and_then(|value| value.get("filters").cloned())
+            .and_then(|value| serde_json::from_value::<cap_project::AudioFilters>(value).ok())
+            .unwrap_or_default()
+            .validated();
     }
 }
 

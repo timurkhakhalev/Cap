@@ -12,7 +12,7 @@ use crate::{
 use std::{
     ops::Range,
     path::PathBuf,
-    sync::{Arc, Mutex, OnceLock, atomic::AtomicBool},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 use tokio::sync::watch;
 
@@ -49,7 +49,7 @@ pub struct DecodedAudio {
     storage: AudioStorage,
     channels: u16,
     frames: usize,
-    voice_profile: Arc<OnceLock<VoiceProfile>>,
+    voice_profile: Arc<crate::voice_level::VoiceProfileCache>,
 }
 
 enum AudioStorage {
@@ -58,10 +58,8 @@ enum AudioStorage {
 }
 
 impl DecodedAudio {
-    pub fn voice_profile(&self) -> VoiceProfile {
-        *self
-            .voice_profile
-            .get_or_init(|| VoiceProfile::analyze(self))
+    pub fn voice_profile(&self, settings: cap_project::AudioFilters) -> VoiceProfile {
+        self.voice_profile.analyze(self, settings)
     }
 
     pub fn channels(&self) -> u16 {
@@ -151,7 +149,7 @@ struct PendingBlocks {
     blocks: Vec<Arc<Vec<f32>>>,
     frames: usize,
     channels: Option<u16>,
-    voice_profile: Arc<OnceLock<VoiceProfile>>,
+    voice_profile: Arc<crate::voice_level::VoiceProfileCache>,
 }
 
 impl PendingBlocks {
@@ -330,12 +328,15 @@ impl ProgressiveAudio {
         progress
     }
 
-    pub fn try_voice_profile(&self) -> Result<Option<VoiceProfile>, String> {
+    pub fn try_voice_profile(
+        &self,
+        settings: cap_project::AudioFilters,
+    ) -> Result<Option<VoiceProfile>, String> {
         let result = self.rx.borrow().result.clone();
         if let Some(result) = result {
             return result
                 .as_ref()
-                .map(|audio| audio.as_ref().map(|audio| audio.voice_profile()))
+                .map(|audio| audio.as_ref().map(|audio| audio.voice_profile(settings)))
                 .map_err(Clone::clone);
         }
         let profile = self
@@ -344,13 +345,11 @@ impl ProgressiveAudio {
             .map_err(|error| error.to_string())?
             .voice_profile
             .clone();
-        if let Some(profile) = profile.get() {
-            return Ok(Some(*profile));
+        if let Some(profile) = profile.get(settings) {
+            return Ok(Some(profile));
         }
         match self.try_window(0..VOICE_PROFILE_SAMPLES)? {
-            AudioWindowRead::Ready(Some(window)) => Ok(Some(
-                *profile.get_or_init(|| VoiceProfile::analyze(&window)),
-            )),
+            AudioWindowRead::Ready(Some(window)) => Ok(Some(profile.analyze(&window, settings))),
             AudioWindowRead::Pending | AudioWindowRead::Ready(None) => Ok(None),
         }
     }

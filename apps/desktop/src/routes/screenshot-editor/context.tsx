@@ -11,6 +11,7 @@ import {
 	onCleanup,
 } from "solid-js";
 import { createStore, reconcile, unwrap } from "solid-js/store";
+import { studioSoundFilters } from "~/utils/audio-filter-settings";
 import { createLazySignal, type FrameData } from "~/utils/socket";
 import {
 	type Annotation,
@@ -127,6 +128,7 @@ const DEFAULT_AUDIO: AudioConfiguration = {
 	mute: false,
 	improve: false,
 	isolation: "balanced",
+	filters: { ...studioSoundFilters },
 	micVolumeDb: 0,
 	micStereoMode: "stereo",
 	systemVolumeDb: 0,

@@ -271,7 +271,8 @@ impl PreparingAudioMixer {
                 && self.voice_profiles[index].is_none()
                 && let Some(loader) = &self.sources.tracks[index][0]
             {
-                self.voice_profiles[index] = loader.try_voice_profile()?;
+                self.voice_profiles[index] =
+                    loader.try_voice_profile(self.sources.project.audio.filters.validated())?;
                 if self.voice_profiles[index].is_none() {
                     pending.get_or_insert_with(|| PreparingAudioRead::Pending {
                         loader: Some(loader.clone()),
@@ -360,6 +361,8 @@ impl PreparingAudioMixer {
                                     window.channels(),
                                     self.sources.project.audio.isolation.strength(),
                                     self.voice_profiles[span.clip].unwrap_or_default(),
+                                    self.sources.project.audio.filters.validated(),
+                                    self.sources.project.audio.mic_volume_db,
                                 ),
                             ));
                         }
@@ -403,6 +406,8 @@ impl PreparingAudioMixer {
                         data,
                         gain: if audio.mute || gain < -30.0 {
                             f32::NEG_INFINITY
+                        } else if matches!(data, VoiceSource::Enhanced(_)) {
+                            0.0
                         } else {
                             gain
                         },

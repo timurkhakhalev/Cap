@@ -654,6 +654,7 @@ pub struct AudioConfiguration {
     pub mute: bool,
     pub improve: bool,
     pub isolation: VoiceIsolation,
+    pub filters: AudioFilters,
     pub mic_volume_db: f32,
     pub mic_stereo_mode: StereoMode,
     pub system_volume_db: f32,
@@ -665,9 +666,64 @@ impl Default for AudioConfiguration {
             mute: false,
             improve: false,
             isolation: VoiceIsolation::default(),
+            filters: AudioFilters::default(),
             mic_volume_db: 0.0,
             mic_stereo_mode: StereoMode::default(),
             system_volume_db: 0.0,
+        }
+    }
+}
+
+#[derive(Type, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AudioFilters {
+    pub noise_reduction: bool,
+    pub auto_level: bool,
+    pub target_lufs: f32,
+    pub compressor: bool,
+    pub threshold_db: f32,
+    pub ratio: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    pub limiter: bool,
+    pub ceiling_db: f32,
+}
+
+impl Default for AudioFilters {
+    fn default() -> Self {
+        Self {
+            noise_reduction: true,
+            auto_level: true,
+            target_lufs: -16.0,
+            compressor: true,
+            threshold_db: 20.0 * 0.125_f32.log10(),
+            ratio: 2.0,
+            attack_ms: 15.0,
+            release_ms: 180.0,
+            limiter: true,
+            ceiling_db: 20.0 * 0.841395_f32.log10(),
+        }
+    }
+}
+
+impl AudioFilters {
+    pub fn validated(self) -> Self {
+        let defaults = Self::default();
+        let bounded = |value: f32, min: f32, max: f32, default: f32| {
+            if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                default
+            }
+        };
+        Self {
+            target_lufs: bounded(self.target_lufs, -30.0, -10.0, defaults.target_lufs),
+            threshold_db: bounded(self.threshold_db, -60.0, 0.0, defaults.threshold_db),
+            ratio: bounded(self.ratio, 1.0, 20.0, defaults.ratio),
+            attack_ms: bounded(self.attack_ms, 1.0, 100.0, defaults.attack_ms),
+            release_ms: bounded(self.release_ms, 10.0, 1000.0, defaults.release_ms),
+            ceiling_db: bounded(self.ceiling_db, -12.0, -0.1, defaults.ceiling_db),
+            ..self
         }
     }
 }
@@ -3025,6 +3081,43 @@ mod notch_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_audio_filters_round_trip_and_bound_unsafe_parameters() {
+        let mut audio = AudioConfiguration::default();
+        audio.filters.noise_reduction = false;
+        audio.filters.ratio = 8.0;
+        audio.filters.ceiling_db = -6.0;
+        let restored: AudioConfiguration =
+            serde_json::from_value(serde_json::to_value(&audio).unwrap()).unwrap();
+        assert_eq!(audio, restored);
+        let directory = tempfile::tempdir().unwrap();
+        let project = ProjectConfiguration {
+            audio: audio.clone(),
+            ..Default::default()
+        };
+        project.write(directory.path()).unwrap();
+        let reopened = ProjectConfiguration::load(directory.path()).unwrap();
+        assert_eq!(reopened.audio, audio);
+        let bounded = AudioFilters {
+            threshold_db: f32::NAN,
+            ratio: f32::INFINITY,
+            attack_ms: -1.0,
+            release_ms: 100_000.0,
+            ceiling_db: 12.0,
+            ..Default::default()
+        }
+        .validated();
+        assert!(bounded.threshold_db.is_finite());
+        assert!(bounded.ratio.is_finite());
+        assert_eq!(bounded.attack_ms, 1.0);
+        assert_eq!(bounded.release_ms, 1000.0);
+        assert_eq!(bounded.ceiling_db, -0.1);
+        let old: AudioConfiguration =
+            serde_json::from_str(r#"{"improve":true,"isolation":"strong"}"#).unwrap();
+        assert_eq!(old.filters, AudioFilters::default());
+        assert!(old.improve);
+    }
 
     #[test]
     fn studio_sound_defaults_old_projects_to_balanced_and_round_trips_tiers() {

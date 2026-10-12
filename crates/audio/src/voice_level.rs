@@ -1,20 +1,55 @@
 use crate::{AudioSampleSource, VoiceEnhancer, cast_bytes_to_f32_slice, cast_f32_slice_to_bytes};
+use cap_project::AudioFilters;
 use ffmpeg::{ChannelLayout, filter, format, frame::Audio};
 
 pub const VOICE_PROFILE_SAMPLES: usize = 16 * 48_000;
-fn compressor(channels: u16) -> String {
-    let threshold = if channels == 1 {
-        0.125 * std::f32::consts::SQRT_2
-    } else {
-        0.125
-    };
-    format!("acompressor=threshold={threshold}:ratio=2:attack=15:release=180:knee=2.828:makeup=1")
+fn compressor(channels: u16, settings: AudioFilters) -> String {
+    let threshold = (10.0_f32.powf(settings.threshold_db / 20.0)
+        * if channels == 1 {
+            std::f32::consts::SQRT_2
+        } else {
+            1.0
+        })
+    .clamp(0.00097563, 1.0);
+    format!(
+        "acompressor=threshold={threshold}:ratio={}:attack={}:release={}:knee=2.828:makeup=1",
+        settings.ratio, settings.attack_ms, settings.release_ms
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VoiceProfile {
     pub gain_db: f32,
     pub makeup_db: f32,
+}
+
+#[derive(Default)]
+pub(crate) struct VoiceProfileCache(std::sync::Mutex<Option<(AudioFilters, VoiceProfile)>>);
+
+impl VoiceProfileCache {
+    pub(crate) fn get(&self, settings: AudioFilters) -> Option<VoiceProfile> {
+        self.0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .filter(|(key, _)| *key == settings)
+            .map(|(_, profile)| profile)
+    }
+
+    pub(crate) fn analyze(
+        &self,
+        source: &impl AudioSampleSource,
+        settings: AudioFilters,
+    ) -> VoiceProfile {
+        let mut cached = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some((key, profile)) = *cached
+            && key == settings
+        {
+            return profile;
+        }
+        let profile = VoiceProfile::analyze(source, settings);
+        *cached = Some((settings, profile));
+        profile
+    }
 }
 
 struct ProfileSource<'a, T> {
@@ -40,14 +75,20 @@ impl<T: AudioSampleSource> AudioSampleSource for ProfileSource<'_, T> {
 }
 
 impl VoiceProfile {
-    pub fn analyze(source: &impl AudioSampleSource) -> Self {
-        Self::try_analyze(source).unwrap_or_else(|error| {
+    pub fn analyze(source: &impl AudioSampleSource, settings: AudioFilters) -> Self {
+        if !settings.auto_level {
+            return Self::default();
+        }
+        Self::try_analyze(source, settings.validated()).unwrap_or_else(|error| {
             tracing::warn!(%error, "Could not estimate Studio Sound voice level");
             Self::default()
         })
     }
 
-    fn try_analyze(source: &impl AudioSampleSource) -> Result<Self, ffmpeg::Error> {
+    fn try_analyze(
+        source: &impl AudioSampleSource,
+        settings: AudioFilters,
+    ) -> Result<Self, ffmpeg::Error> {
         let channels = source.channels().clamp(1, 2);
         let frames = source.sample_count().min(VOICE_PROFILE_SAMPLES);
         let source = ProfileSource {
@@ -82,22 +123,39 @@ impl VoiceProfile {
         if level < -60.0 {
             return Ok(Self::default());
         }
-        let gain_db = (-16.0 - level).clamp(-12.0, 24.0);
-        let filter = format!("volume={gain_db}dB,{}", compressor(channels));
-        let compressed = measure(&samples, channels, &filter)?.unwrap_or(-16.0);
+        let gain_db = (settings.target_lufs - level).clamp(-12.0, 24.0);
+        if !settings.compressor {
+            return Ok(Self {
+                gain_db,
+                makeup_db: 0.0,
+            });
+        }
+        let filter = format!("volume={gain_db}dB,{}", compressor(channels, settings));
+        let compressed = measure(&samples, channels, &filter)?.unwrap_or(settings.target_lufs);
         Ok(Self {
             gain_db,
-            makeup_db: (-16.0 - compressed).clamp(-6.0, 6.0),
+            makeup_db: (settings.target_lufs - compressed).clamp(-6.0, 6.0),
         })
     }
 
-    pub(crate) fn filter(self, channels: u16) -> String {
-        format!(
-            "volume={}dB,{},volume={}dB,aresample=192000,alimiter=limit=0.841395:attack=5:release=80:level=false:latency=true,aresample=48000",
-            self.gain_db,
-            compressor(channels),
-            self.makeup_db,
-        )
+    pub(crate) fn filter(self, channels: u16, settings: AudioFilters, output_db: f32) -> String {
+        let settings = settings.validated();
+        let mut filters = Vec::new();
+        if settings.auto_level {
+            filters.push(format!("volume={}dB", self.gain_db));
+        }
+        if settings.compressor {
+            filters.push(compressor(channels, settings));
+        }
+        if settings.auto_level && settings.compressor {
+            filters.push(format!("volume={}dB", self.makeup_db));
+        }
+        filters.push(format!("volume={output_db}dB"));
+        if settings.limiter {
+            let limit = 10.0_f32.powf(settings.ceiling_db / 20.0);
+            filters.push(format!("aresample=192000,alimiter=limit={limit}:attack=5:release=80:level=false:latency=true,aresample=48000"));
+        }
+        filters.join(",")
     }
 }
 

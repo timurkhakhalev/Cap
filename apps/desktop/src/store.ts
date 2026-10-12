@@ -10,6 +10,7 @@ import {
 import { createSerializedStore } from "~/utils/serialized-store";
 import type {
 	AnimatedGradientLibrary,
+	AudioFilters,
 	AuthStore,
 	HotkeysStore,
 	PresetsStore,
@@ -102,6 +103,7 @@ function declareStore<T extends object>(name: string, defaults?: T) {
 export const audioEnhancementStore = declareStore<{
 	enabledByDefault: boolean;
 	isolation: VoiceIsolation;
+	filters?: AudioFilters;
 }>("audio_enhancement", { enabledByDefault: true, isolation: "balanced" });
 
 export const presetsStore = declareStore<PresetsStore>("presets");

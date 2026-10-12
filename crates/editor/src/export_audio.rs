@@ -15,6 +15,10 @@ use std::{
     },
 };
 
+#[cfg(test)]
+#[path = "audio_lab.rs"]
+mod audio_lab;
+
 pub(crate) const EXPORT_AUDIO_BLOCK_SAMPLES: usize = 4_096;
 const MAX_PARALLEL_AUDIO_SOURCES: usize = 4;
 const MAX_ENHANCED_WINDOW_SAMPLES: usize =
@@ -485,13 +489,19 @@ impl ExportAudioSources {
                     track.enhanced = None;
                     continue;
                 }
-                if track.isolation != project.audio.isolation {
+                if track.isolation != project.audio.isolation
+                    || track.filters != project.audio.filters.validated()
+                    || track.gain_db != project.audio.mic_volume_db
+                {
                     track.enhancer = None;
                     track.isolation = project.audio.isolation;
+                    track.filters = project.audio.filters.validated();
+                    track.gain_db = project.audio.mic_volume_db;
+                    track.voice_profile = None;
                 }
                 let profile = *track.voice_profile.get_or_insert_with(|| {
                     AudioData::from_file_range(&track.path, 0, VOICE_PROFILE_SAMPLES)
-                        .map(|audio| VoiceProfile::analyze(&audio))
+                        .map(|audio| VoiceProfile::analyze(&audio, track.filters))
                         .unwrap_or_else(|error| {
                             tracing::warn!(%error, "Could not estimate export voice level");
                             VoiceProfile::default()
@@ -502,6 +512,8 @@ impl ExportAudioSources {
                         track.source.channels(),
                         project.audio.isolation.strength(),
                         profile,
+                        track.filters,
+                        track.gain_db,
                     )
                 });
                 let range = enhancer.source_range(start, end.saturating_sub(start));
@@ -547,6 +559,8 @@ impl ExportAudioSources {
                     data: view,
                     gain: if project.audio.mute || gain < -30.0 {
                         f32::NEG_INFINITY
+                    } else if track.enhanced.is_some() {
+                        0.0
                     } else {
                         gain
                     },
@@ -587,6 +601,8 @@ struct ExportAudioTrack {
     enhanced: Option<VoiceAudio>,
     voice_profile: Option<VoiceProfile>,
     isolation: cap_project::VoiceIsolation,
+    filters: cap_project::AudioFilters,
+    gain_db: f32,
 }
 
 impl ExportAudioTrack {
@@ -618,6 +634,8 @@ impl ExportAudioTrack {
             enhanced: None,
             voice_profile: None,
             isolation: cap_project::VoiceIsolation::default(),
+            filters: cap_project::AudioFilters::default(),
+            gain_db: 0.0,
         })
     }
 
@@ -1390,7 +1408,22 @@ mod tests {
         let path = std::env::var_os("CAP_STUDIO_SOUND_BENCH_RECORDING").unwrap();
         let recording = RecordingMeta::load_for_project(Path::new(&path)).unwrap();
         let mut totals = Vec::new();
-        for improve in [false, true] {
+        for (name, improve, filters) in [
+            ("off", false, cap_project::AudioFilters::default()),
+            ("studio-sound", true, cap_project::AudioFilters::default()),
+            (
+                "custom-compressor-limiter",
+                true,
+                cap_project::AudioFilters {
+                    noise_reduction: false,
+                    auto_level: false,
+                    threshold_db: -30.0,
+                    ratio: 8.0,
+                    ceiling_db: -6.0,
+                    ..Default::default()
+                },
+            ),
+        ] {
             let started = std::time::Instant::now();
             let mut preparation = ExportAudioPreparation::open(
                 &recording,
@@ -1401,6 +1434,7 @@ mod tests {
             .unwrap();
             let mut project = ProjectConfiguration::default();
             project.audio.improve = improve;
+            project.audio.filters = filters;
             let mut count = 0_usize;
             let mut peak_window_bytes = 0;
             let mut output = [0.0; EXPORT_AUDIO_BLOCK_SAMPLES * 2];
@@ -1447,12 +1481,12 @@ mod tests {
             assert!(count > 0);
             totals.push(count);
             eprintln!(
-                "studio_sound={improve}, audio_seconds={:.3}, elapsed_seconds={:.3}, source_window_bytes={peak_window_bytes}",
+                "filters={name}, audio_seconds={:.3}, elapsed_seconds={:.3}, source_window_bytes={peak_window_bytes}",
                 count as f64 / 48_000.0,
                 started.elapsed().as_secs_f64()
             );
         }
-        assert_eq!(totals[0], totals[1]);
+        assert!(totals.iter().all(|count| *count == totals[0]));
     }
 
     #[test]
@@ -1463,6 +1497,11 @@ mod tests {
     #[test]
     fn clip_volume_matches_preview_in_streaming_exports_and_transitions() {
         assert_bounded_sink_variants(22..26, &[1, 997, 4_800, 48_001]);
+    }
+
+    #[test]
+    fn independent_filters_match_export_with_trim_gain_and_mixed_sources() {
+        assert_bounded_sink_variants(26..30, &[1, 997, 4_800, 48_001]);
     }
 
     #[test]
@@ -1569,6 +1608,28 @@ mod tests {
                             duration: 0.131_234_567,
                         });
                     }
+                }
+                26..=29 => {
+                    project.audio.improve = true;
+                    project.audio.mic_volume_db = 6.0;
+                    project.audio.filters = cap_project::AudioFilters {
+                        noise_reduction: variant == 26,
+                        auto_level: variant == 27,
+                        compressor: variant == 28,
+                        limiter: variant == 29,
+                        threshold_db: -30.0,
+                        ratio: 8.0,
+                        ceiling_db: -6.0,
+                        ..Default::default()
+                    };
+                    let timeline = project.timeline.as_mut().unwrap();
+                    timeline.segments[0].volume = Some(0.5);
+                    timeline.segments[1].volume = Some(2.0);
+                    timeline.transitions.push(ClipTransition {
+                        segment_index: 1,
+                        kind: ClipTransitionType::CrossFade,
+                        duration: 0.131_234_567,
+                    });
                 }
                 _ => unreachable!(),
             }

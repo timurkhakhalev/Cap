@@ -684,7 +684,8 @@ export type AnnotationType = "arrow" | "circle" | "rectangle" | "text" | "mask" 
 export type AppTheme = "system" | "light" | "dark"
 export type AspectRatio = "wide" | "vertical" | "square" | "classic" | "tall"
 export type Audio = { duration: number; sample_rate: number; channels: number; start_time: number }
-export type AudioConfiguration = { mute: boolean; improve: boolean; isolation: VoiceIsolation; micVolumeDb: number; micStereoMode: StereoMode; systemVolumeDb: number }
+export type AudioConfiguration = { mute: boolean; improve: boolean; isolation: VoiceIsolation; filters: AudioFilters; micVolumeDb: number; micStereoMode: StereoMode; systemVolumeDb: number }
+export type AudioFilters = { noiseReduction: boolean; autoLevel: boolean; targetLufs: number; compressor: boolean; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; limiter: boolean; ceilingDb: number }
 /**
  * Overlap-trim accounting captured by the recorder's audio gap tracker, persisted so the
  * editor can compensate for stale-startup audio drift from typed data instead of scraping

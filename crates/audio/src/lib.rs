@@ -24,6 +24,7 @@ pub trait FromSampleBytes: cpal::SizedSample + std::fmt::Debug + Send + 'static 
     const BYTE_SIZE: usize;
 
     fn from_bytes(bytes: &[u8]) -> Self;
+    fn to_f32(self) -> f32;
 }
 
 macro_rules! sample_bytes {
@@ -34,6 +35,10 @@ macro_rules! sample_bytes {
 
                 fn from_bytes(bytes: &[u8]) -> Self {
                     Self::from_le_bytes(bytes.try_into().expect("Incorrect byte slice length"))
+                }
+
+                fn to_f32(self) -> f32 {
+                    cpal::Sample::to_sample::<f32>(self)
                 }
             }
         )*

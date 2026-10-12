@@ -31,6 +31,8 @@
 		"tauri:build": "dotenv -e .env -- bun run --cwd apps/desktop build:tauri --config src-tauri/tauri.prod.conf.json --verbose",
 		"typecheck": "bun run --cwd apps/web next typegen && bun run tsc -b",
 		"test": "turbo run test",
+		"audio:lab": "uv run --no-project --python 3.12 --with-requirements scripts/audio-lab/requirements.txt python scripts/audio-lab/main.py",
+		"audio:lab:test": "uv run --no-project --python 3.12 --with-requirements scripts/audio-lab/requirements.txt python -m unittest discover -s scripts/audio-lab -p 'test_*.py'",
 		"test:web": "bun run --filter=@cap/web test",
 		"test:discover": "bun run with-env cargo run -p cap-test -- discover",
 		"test:matrix": "bun run with-env cargo run -p cap-test -- matrix",

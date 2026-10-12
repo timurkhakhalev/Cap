@@ -73,7 +73,6 @@ import {
 	type SplitLayout,
 	type StereoMode,
 	type TimelineSegment,
-	type VoiceIsolation,
 	type XY,
 	type ZoomSegment,
 } from "~/utils/tauri";
@@ -87,6 +86,7 @@ import {
 	AnimatedGradientEditor,
 	copyAnimatedGradientConfig,
 } from "./AnimatedGradientEditor";
+import { AudioFiltersCard } from "./AudioFiltersCard";
 import { AudioLibraryPanel } from "./AudioLibrary";
 import {
 	AUDIO_TRACK_BG_CLASS,
@@ -450,119 +450,37 @@ export function ConfigSidebar() {
 }
 
 function StudioSoundCard() {
-	const { project, setProject } = useEditorContext();
-	const audioEnhancement = audioEnhancementStore.createQuery();
+	const { project, setProject, editorState, setEditorState } =
+		useEditorContext();
 	const [savingDefault, setSavingDefault] = createSignal(false);
-	const enabled = () => project.audio.improve;
-	const isolationOptions = [
-		{
-			value: "light",
-			label: "Light",
-			description: "Keep more of your original voice and room sound.",
-		},
-		{
-			value: "balanced",
-			label: "Balanced",
-			description: "Clearer isolation with natural voice detail.",
-		},
-		{
-			value: "strong",
-			label: "Strong",
-			description: "More isolation for noisy spaces. May change voice texture.",
-		},
-	] satisfies { value: VoiceIsolation; label: string; description: string }[];
-
 	return (
-		<div class="flex flex-col p-3.5 rounded-xl bg-ed-card-2">
-			<div class="flex flex-row gap-2.5 items-center">
-				<div
-					class="flex justify-center items-center rounded-[9px] size-[30px] shrink-0 transition-colors"
-					classList={{
-						"bg-ed-accent/12 text-ed-accent": enabled(),
-						"bg-ed-ctl text-ed-text-2": !enabled(),
-					}}
-				>
-					<IconCapMicrophone class="size-4" />
-				</div>
-				<div class="flex flex-col flex-1 gap-0.5 min-w-0">
-					<span class="text-[13px] font-medium text-ed-text-1">
-						Studio Sound
-					</span>
-					<span class="text-xs leading-4 text-ed-text-3">
-						Reduces background noise and balances your voice level.
-					</span>
-				</div>
-				<Toggle
-					checked={enabled()}
-					onChange={(value) => setProject("audio", "improve", value)}
-				/>
-			</div>
-			<Show when={enabled()}>
-				<RadioGroup
-					aria-label="Voice isolation"
-					value={project.audio.isolation}
-					disabled={savingDefault() || audioEnhancement.isPending}
-					onChange={async (value) => {
-						const option = isolationOptions.find(
-							(option) => option.value === value,
-						);
-						if (!option) return;
-						setProject("audio", "isolation", option.value);
-						if (!audioEnhancement.data?.enabledByDefault) return;
-						setSavingDefault(true);
-						try {
-							await audioEnhancementStore.set({ isolation: option.value });
-							await audioEnhancement.refetch();
-						} catch {
-							toast.error("Could not save the Studio Sound default");
-						} finally {
-							setSavingDefault(false);
-						}
-					}}
-					class="flex gap-0.5 p-0.5 mt-3 rounded-lg bg-ed-ctl"
-				>
-					<For each={isolationOptions}>
-						{(option) => (
-							<RadioGroup.Item value={option.value} class="flex-1 min-w-0">
-								<RadioGroup.ItemInput class="sr-only peer" />
-								<RadioGroup.ItemLabel class="flex justify-center py-1 text-xs font-medium rounded-md cursor-pointer text-ed-text-2 peer-focus-visible:ring-2 peer-focus-visible:ring-ed-accent data-checked:bg-ed-card data-checked:text-ed-text-1 data-disabled:opacity-50">
-									{option.label}
-								</RadioGroup.ItemLabel>
-							</RadioGroup.Item>
-						)}
-					</For>
-				</RadioGroup>
-				<p class="mt-2 text-xs leading-4 text-ed-text-3">
-					{
-						isolationOptions.find(
-							(option) => option.value === project.audio.isolation,
-						)?.description
-					}
-				</p>
-			</Show>
-			<div class="flex flex-row gap-2.5 justify-between items-center pt-3 mt-3 border-t border-ed-line">
-				<span class="text-xs text-ed-text-2">Use for new recordings</span>
-				<Toggle
-					size="sm"
-					checked={audioEnhancement.data?.enabledByDefault ?? true}
-					disabled={audioEnhancement.isPending || savingDefault()}
-					onChange={async (value) => {
-						setSavingDefault(true);
-						try {
-							await audioEnhancementStore.set({
-								enabledByDefault: value,
-								isolation: project.audio.isolation,
-							});
-							await audioEnhancement.refetch();
-						} catch {
-							toast.error("Could not save the Studio Sound default");
-						} finally {
-							setSavingDefault(false);
-						}
-					}}
-				/>
-			</div>
-		</div>
+		<AudioFiltersCard
+			audio={project.audio}
+			previewBypass={editorState.audioPreviewBypass}
+			onPreviewBypassChange={(value) =>
+				setEditorState("audioPreviewBypass", value)
+			}
+			onChange={(patch) => {
+				setEditorState("audioPreviewBypass", false);
+				setProject("audio", patch);
+			}}
+			savingDefault={savingDefault()}
+			onSaveDefault={async () => {
+				setSavingDefault(true);
+				try {
+					await audioEnhancementStore.set({
+						enabledByDefault: project.audio.improve,
+						isolation: project.audio.isolation,
+						filters: { ...project.audio.filters },
+					});
+					toast.success("Audio defaults saved for new recordings");
+				} catch {
+					toast.error("Could not save audio defaults");
+				} finally {
+					setSavingDefault(false);
+				}
+			}}
+		/>
 	);
 }
 

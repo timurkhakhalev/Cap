@@ -134,7 +134,7 @@ struct TimelineCursor<'a> {
     segment: &'a cap_project::TimelineSegment,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq)]
 struct SpeedAudioProcessorKey {
     segment_index: usize,
     recording_clip: u32,
@@ -145,6 +145,7 @@ struct SpeedAudioProcessorKey {
     mic_volume_bits: u32,
     improve_microphone: bool,
     isolation: VoiceIsolation,
+    filters: cap_project::AudioFilters,
     system_volume_bits: u32,
     mic_stereo_mode: u8,
     mic_offset_bits: u32,
@@ -743,6 +744,7 @@ impl AudioRenderer {
             mic_volume_bits: project.audio.mic_volume_db.to_bits(),
             improve_microphone: project.audio.improve,
             isolation: project.audio.isolation,
+            filters: project.audio.filters.validated(),
             system_volume_bits: project.audio.system_volume_db.to_bits(),
             mic_stereo_mode: project_stereo_mode_key(&project.audio.mic_stereo_mode),
             mic_offset_bits: offsets.mic.to_bits(),
@@ -936,11 +938,16 @@ fn render_audio_data_chunk(
                     return None;
                 }
                 Some(enhancement.render(
-                    (clip_key, index),
+                    VoiceEnhancementKey {
+                        clip: clip_key,
+                        track: index,
+                        isolation: project.audio.isolation,
+                        filters: project.audio.filters.validated(),
+                        gain_db: data.gain,
+                    },
                     data.data,
                     start,
                     end.saturating_sub(start),
-                    project.audio.isolation,
                 ))
             })
             .collect::<Vec<_>>();
@@ -958,7 +965,11 @@ fn render_audio_data_chunk(
             .zip(&sources)
             .map(|(track, source)| AudioRendererTrack {
                 data: source,
-                gain: track.gain,
+                gain: if matches!(source, VoiceSource::Enhanced(_)) {
+                    0.0
+                } else {
+                    track.gain
+                },
                 stereo_mode: match track.stereo_mode {
                     StereoMode::Stereo => StereoMode::Stereo,
                     StereoMode::MonoL => StereoMode::MonoL,
@@ -972,21 +983,28 @@ fn render_audio_data_chunk(
     samples
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct VoiceEnhancementKey {
+    clip: usize,
+    track: usize,
+    isolation: VoiceIsolation,
+    filters: cap_project::AudioFilters,
+    gain_db: f32,
+}
+
 #[derive(Default)]
 struct VoiceEnhancementCache {
-    slots: Vec<((usize, usize, VoiceIsolation), VoiceEnhancer)>,
+    slots: Vec<(VoiceEnhancementKey, VoiceEnhancer)>,
 }
 
 impl VoiceEnhancementCache {
     fn render(
         &mut self,
-        key: (usize, usize),
+        key: VoiceEnhancementKey,
         source: &DecodedAudio,
         start: usize,
         count: usize,
-        isolation: VoiceIsolation,
     ) -> VoiceAudio {
-        let key = (key.0, key.1, isolation);
         let index = self
             .slots
             .iter()
@@ -998,8 +1016,10 @@ impl VoiceEnhancementCache {
                 key,
                 VoiceEnhancer::with_settings(
                     source.channels(),
-                    isolation.strength(),
-                    source.voice_profile(),
+                    key.isolation.strength(),
+                    source.voice_profile(key.filters),
+                    key.filters,
+                    key.gain_db,
                 ),
             )
         };
