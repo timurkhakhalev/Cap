@@ -3,6 +3,7 @@ import {
 	CAMERA_MAX_SIZE,
 	CAMERA_MIN_SIZE,
 	cameraPreviewDimensions,
+	cameraResizePosition,
 	cameraResizeSize,
 } from "./CameraPreviewChrome";
 
@@ -43,6 +44,22 @@ describe("camera corner resizing", () => {
 							cameraResizeSize(size, dimensions, corner, delta),
 						).toBeCloseTo(size + change);
 					}
+					const initialPosition = { x: 100, y: 200 };
+					const scale = (size + change) / size;
+					const position = cameraResizePosition(
+						initialPosition,
+						dimensions,
+						corner,
+						scale,
+					);
+					const oppositeX = corner.includes("w") ? dimensions.width : 0;
+					const oppositeY = corner.includes("n") ? dimensions.height : 0;
+					expect(position.x + oppositeX * scale).toBeCloseTo(
+						initialPosition.x + oppositeX,
+					);
+					expect(position.y + oppositeY * scale).toBeCloseTo(
+						initialPosition.y + oppositeY,
+					);
 				}
 			});
 		}

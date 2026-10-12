@@ -1,4 +1,5 @@
 import { ToggleButton as KToggleButton } from "@kobalte/core/toggle-button";
+import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
 import { type as ostype } from "@tauri-apps/plugin-os";
 import { cx } from "cva";
 import {
@@ -89,6 +90,19 @@ export function cameraResizeSize(
 	const dy =
 		(delta.y * (corner.includes("s") ? 1 : -1) * size) / dimensions.height;
 	return clampCameraSize(size + (Math.abs(dx) > Math.abs(dy) ? dx : dy));
+}
+
+export function cameraResizePosition(
+	position: { x: number; y: number },
+	dimensions: { width: number; height: number },
+	corner: ResizeCorner,
+	scale: number,
+) {
+	return {
+		x: position.x + (corner.includes("w") ? dimensions.width * (1 - scale) : 0),
+		y:
+			position.y + (corner.includes("n") ? dimensions.height * (1 - scale) : 0),
+	};
 }
 
 export const normalizeBackgroundBlurMode = (
@@ -263,6 +277,8 @@ export function CameraResizeHandles(props: {
 		size: 0,
 		x: 0,
 		y: 0,
+		windowX: 0,
+		windowY: 0,
 		width: 0,
 		height: 0,
 		corner: "nw" as ResizeCorner,
@@ -281,6 +297,8 @@ export function CameraResizeHandles(props: {
 			size: props.state.size,
 			x: e.screenX,
 			y: e.screenY,
+			windowX: e.screenX - e.clientX,
+			windowY: e.screenY - e.clientY,
 			width,
 			height,
 			corner,
@@ -290,13 +308,22 @@ export function CameraResizeHandles(props: {
 	const handleResizeMove = (e: MouseEvent) => {
 		if (!isResizing()) return;
 		const start = resizeStart();
-		props.setState(
-			"size",
-			cameraResizeSize(start.size, start, start.corner, {
-				x: e.screenX - start.x,
-				y: e.screenY - start.y,
-			}),
+		const size = cameraResizeSize(start.size, start, start.corner, {
+			x: e.screenX - start.x,
+			y: e.screenY - start.y,
+		});
+		const position = cameraResizePosition(
+			{ x: start.windowX, y: start.windowY },
+			start,
+			start.corner,
+			size / start.size,
 		);
+		props.setState("size", size);
+		void getCurrentWindow()
+			.setPosition(new LogicalPosition(position.x, position.y))
+			.catch((error) =>
+				console.error("Failed to position resized camera", error),
+			);
 	};
 
 	const handleResizeEnd = () => {
