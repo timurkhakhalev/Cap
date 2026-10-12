@@ -1324,6 +1324,7 @@ name = "cap-audio"
 version = "0.1.0"
 dependencies = [
  "cap-enc-ffmpeg",
+ "cap-project",
  "cap-rnnoise",
  "cidre",
  "cpal 0.15.3 (git+https://github.com/CapSoftware/cpal?rev=6013cb5f8bd3)",

@@ -119,6 +119,9 @@ function getPreviewProjectConfig(
 	editorState: ReturnType<typeof useEditorContext>["editorState"],
 ) {
 	const config = serializeProjectConfiguration(project);
+	if (editorState.audioPreviewBypass) {
+		config.audio = { ...config.audio, improve: false };
+	}
 
 	if (!editorState.timeline.tracks.caption && config.captions) {
 		config.captions = {
@@ -796,6 +799,7 @@ function Inner(props: {
 			() => {
 				trackDeep(project);
 				return {
+					audioPreviewBypass: editorState.audioPreviewBypass,
 					caption: editorState.timeline.tracks.caption,
 					keyboard: editorState.timeline.tracks.keyboard,
 					threeD: editorState.timeline.tracks["3d"],

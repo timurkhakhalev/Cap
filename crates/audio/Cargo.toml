@@ -7,6 +7,7 @@ edition = "2024"
 test-support = []
 
 [dependencies]
+cap-project = { path = "../project" }
 cap-rnnoise = { path = "../rnnoise" }
 cap-enc-ffmpeg = { path = "../enc-ffmpeg" }
 ffmpeg = { workspace = true }

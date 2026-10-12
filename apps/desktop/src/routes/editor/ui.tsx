@@ -158,7 +158,11 @@ export function Slider(
 		thumbClass?: string;
 	},
 ) {
-	const [local, props] = splitProps(_props, ["thumbClass"]);
+	const [local, props] = splitProps(_props, [
+		"thumbClass",
+		"aria-label",
+		"aria-labelledby",
+	]);
 	const context = useEditorContext();
 	const history = props.history ?? context?.projectHistory;
 
@@ -238,6 +242,8 @@ export function Slider(
 				>
 					<KSlider.Thumb
 						ref={setThumbRef}
+						aria-label={local["aria-label"]}
+						aria-labelledby={local["aria-labelledby"]}
 						onPointerDown={() => {
 							setDragging(true);
 						}}

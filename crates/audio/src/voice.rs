@@ -1,4 +1,5 @@
 use crate::{AudioSampleSource, VoiceProfile, voice_level::VoiceFilter};
+use cap_project::AudioFilters;
 use cap_rnnoise::{DELAY_SAMPLES, DenoiseState, FRAME_SIZE};
 use std::{collections::VecDeque, ops::Range};
 
@@ -17,6 +18,8 @@ pub struct VoiceEnhancer {
     frame: Vec<f32>,
     wet: f32,
     profile: Option<VoiceProfile>,
+    settings: AudioFilters,
+    output_db: f32,
     leveler: Option<VoiceFilter>,
     speech_frames: usize,
 }
@@ -35,17 +38,31 @@ impl VoiceEnhancer {
             frame: vec![0.0; FRAME * channels],
             wet: 0.9,
             profile: None,
+            settings: AudioFilters::default(),
+            output_db: 0.0,
             leveler: None,
             speech_frames: 0,
         }
     }
 
-    pub fn with_settings(channels: u16, wet: f32, profile: VoiceProfile) -> Self {
+    pub fn with_settings(
+        channels: u16,
+        wet: f32,
+        profile: VoiceProfile,
+        settings: AudioFilters,
+        output_db: f32,
+    ) -> Self {
         let mut enhancer = Self::new(channels);
         enhancer.wet = if wet.is_finite() {
             wet.clamp(0.0, 1.0)
         } else {
             0.9
+        };
+        enhancer.settings = settings.validated();
+        enhancer.output_db = if output_db.is_finite() {
+            output_db.clamp(-30.0, 30.0)
+        } else {
+            0.0
         };
         enhancer.profile = Some(profile);
         enhancer
@@ -114,11 +131,14 @@ impl VoiceEnhancer {
             self.states = (0..channels).map(|_| DenoiseState::new()).collect();
             self.speech_frames = 0;
             self.leveler = self.profile.and_then(|profile| {
-                VoiceFilter::new(channels as u16, &profile.filter(channels as u16))
-                    .map_err(|error| {
-                        tracing::warn!(%error, "Studio Sound leveling is unavailable");
-                    })
-                    .ok()
+                VoiceFilter::new(
+                    channels as u16,
+                    &profile.filter(channels as u16, self.settings, self.output_db),
+                )
+                .map_err(|error| {
+                    tracing::warn!(%error, "Studio Sound leveling is unavailable");
+                })
+                .ok()
             });
         }
         while count > 0 && self.pending_start + self.pending.len() / channels < start + count {
@@ -161,16 +181,25 @@ impl VoiceEnhancer {
                     .copied()
                     .unwrap_or(0.0);
                 *sample = if value.is_finite() {
-                    value.clamp(-1.0, 1.0) * 32_768.0
+                    if self.settings.noise_reduction {
+                        value.clamp(-1.0, 1.0) * 32_768.0
+                    } else {
+                        value * 32_768.0
+                    }
                 } else {
                     0.0
                 };
             }
-            speech |= state.process_frame(&mut output, &input) > 0.6;
+            if self.settings.noise_reduction {
+                speech |= state.process_frame(&mut output, &input) > 0.6;
+            }
             for (index, (&clean, &raw)) in output.iter().zip(&input).enumerate() {
                 let index = index * channels + channel;
-                self.frame[index] =
-                    clean / 32_768.0 * self.wet + self.previous[delayed + index] * (1.0 - self.wet);
+                self.frame[index] = if self.settings.noise_reduction {
+                    clean / 32_768.0 * self.wet + self.previous[delayed + index] * (1.0 - self.wet)
+                } else {
+                    self.previous[delayed + index]
+                };
                 self.previous[delayed + index] = raw / 32_768.0;
             }
         }
@@ -258,6 +287,70 @@ impl<T: AudioSampleSource> AudioSampleSource for VoiceSource<'_, T> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn independent_filters_preserve_bypass_samples_and_tail() {
+        for channels in [1, 2] {
+            let source = signal(12_017, channels);
+            let settings = AudioFilters {
+                noise_reduction: false,
+                auto_level: false,
+                compressor: false,
+                limiter: false,
+                ..Default::default()
+            };
+            let actual =
+                VoiceEnhancer::with_settings(channels, 0.9, VoiceProfile::default(), settings, 0.0)
+                    .render(&source, 0, source.sample_count());
+            assert_eq!(actual.samples, source.data);
+        }
+    }
+
+    #[test]
+    fn limiter_protects_output_gain_without_noise_reduction_or_compression() {
+        let source = signal(48_000, 2);
+        let settings = AudioFilters {
+            noise_reduction: false,
+            auto_level: false,
+            compressor: false,
+            limiter: true,
+            ceiling_db: -6.0,
+            ..Default::default()
+        };
+        let actual = VoiceEnhancer::with_settings(2, 0.9, VoiceProfile::default(), settings, 18.0)
+            .render(&source, 0, source.sample_count());
+        assert_eq!(actual.samples.len(), source.data.len());
+        let peak = actual
+            .samples
+            .iter()
+            .map(|value| value.abs())
+            .fold(0.0_f32, f32::max);
+        assert!(peak < 0.53, "peak {peak}");
+        assert!(peak > 0.3, "limiter muted the signal: {peak}");
+    }
+
+    #[test]
+    fn compressor_changes_signal_without_other_filters() {
+        let mut source = signal(48_000, 1);
+        for (index, sample) in source.data.iter_mut().enumerate() {
+            *sample = (index as f32 * 0.037).sin() * 0.5;
+        }
+        let settings = AudioFilters {
+            noise_reduction: false,
+            auto_level: false,
+            compressor: true,
+            threshold_db: -30.0,
+            ratio: 8.0,
+            limiter: false,
+            ..Default::default()
+        };
+        let actual = VoiceEnhancer::with_settings(1, 0.9, VoiceProfile::default(), settings, 0.0)
+            .render(&source, 0, source.sample_count());
+        let energy = |values: &[f32]| values.iter().map(|value| value * value).sum::<f32>();
+        assert_eq!(actual.samples.len(), source.data.len());
+        assert!(energy(&actual.samples[24_000..]) < energy(&source.data[24_000..]) * 0.2);
+        assert!(energy(&actual.samples) > 0.01);
+    }
+
     struct Samples {
         data: Vec<f32>,
         channels: u16,
@@ -304,12 +397,11 @@ mod tests {
                 gain_db: 12.0,
                 makeup_db: 2.0,
             };
-            let expected = VoiceEnhancer::with_settings(channels, 0.9, profile).render(
-                &source,
-                0,
-                source.sample_count(),
-            );
-            let mut enhancer = VoiceEnhancer::with_settings(channels, 0.9, profile);
+            let expected =
+                VoiceEnhancer::with_settings(channels, 0.9, profile, AudioFilters::default(), 0.0)
+                    .render(&source, 0, source.sample_count());
+            let mut enhancer =
+                VoiceEnhancer::with_settings(channels, 0.9, profile, AudioFilters::default(), 0.0);
             let mut actual = Vec::new();
             let mut cursor = 0;
             while cursor < source.sample_count() {
@@ -338,8 +430,14 @@ mod tests {
                 channels,
             };
             impulse.data[5_333 * usize::from(channels)] = 0.8;
-            let audio = VoiceEnhancer::with_settings(channels, 0.0, VoiceProfile::default())
-                .render(&impulse, 0, impulse.sample_count());
+            let audio = VoiceEnhancer::with_settings(
+                channels,
+                0.0,
+                VoiceProfile::default(),
+                AudioFilters::default(),
+                0.0,
+            )
+            .render(&impulse, 0, impulse.sample_count());
             let peak = audio
                 .samples
                 .iter()

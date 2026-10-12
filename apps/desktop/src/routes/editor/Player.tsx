@@ -11,6 +11,7 @@ import {
 	createSignal,
 	For,
 	on,
+	onCleanup,
 	onMount,
 	Show,
 	untrack,
@@ -32,6 +33,13 @@ import { FrameButton } from "./FrameButton";
 import { ImageOverlay } from "./image-overlay";
 import { MaskOverlay } from "./MaskOverlay";
 import { PerformanceOverlay } from "./PerformanceOverlay";
+import {
+	createLoopRestart,
+	loopRange,
+	loopRestartTime,
+	setLoopEdgeAt,
+	togglePlaybackLoop,
+} from "./playback-loop";
 import { usePreparingEditor } from "./preparing-editor-context";
 import { PreparingFrame } from "./preparing-frame";
 import {
@@ -65,6 +73,7 @@ export function PlayerContent(props: { compactness?: number }) {
 		playbackIntent,
 		requestHandoffPlayback,
 		handoffPlaybackPending,
+		meta,
 	} = useEditorContext();
 
 	let panelRef: HTMLDivElement | undefined;
@@ -254,7 +263,69 @@ export function PlayerContent(props: { compactness?: number }) {
 		}
 	};
 
+	const activeLoop = () => loopRange(editorState.playbackLoop, totalDuration());
+	const playhead = () => editorState.previewTime ?? editorState.playbackTime;
+	const toggleLoop = () => {
+		setEditorState(
+			"playbackLoop",
+			togglePlaybackLoop(editorState.playbackLoop, playhead(), totalDuration()),
+		);
+	};
+	const setLoopEdgeAtPlayhead = (edge: "start" | "end") =>
+		setEditorState(
+			"playbackLoop",
+			setLoopEdgeAt(
+				editorState.playbackLoop,
+				edge,
+				playhead(),
+				totalDuration(),
+			),
+		);
+	const canCompareVoice = () =>
+		meta().hasMicrophone && project.audio.improve && !project.audio.mute;
+	const [loopRestarting, setLoopRestarting] = createSignal(false);
+	const loopRestart = createLoopRestart({
+		stop: () => commands.stopPlayback(),
+		seek: (seconds) => commands.seekTo(Math.floor(seconds * FPS)),
+		start: () => commands.startPlayback(FPS, previewResolutionBase()),
+		active: () => playbackIntent(),
+		position: (seconds) => {
+			setEditorState("playbackTime", seconds);
+			setEditorState("previewTime", null);
+		},
+		failed: (error) => {
+			console.error("Could not repeat preview range:", error);
+			setEditorState("playing", false);
+		},
+	});
+	onCleanup(() => loopRestart.cancel());
 	createEffect(() => {
+		const range = activeLoop();
+		if (range && playbackIntent()) {
+			if (loopRestarting() || handoffPlaybackPending()) return;
+			const target = loopRestartTime(
+				editorState.playbackLoop,
+				totalDuration(),
+				editorState.playbackTime,
+				FPS,
+			);
+			if (target !== undefined) {
+				setLoopRestarting(true);
+				const pending = requestHandoffPlayback(true, target);
+				const restart = pending ?? loopRestart.restart(target);
+				void restart
+					.then((accepted) => {
+						if (accepted === false && playbackIntent())
+							setEditorState("playbackLoop", "enabled", false);
+					})
+					.catch((error) => {
+						console.error("Could not repeat preview range:", error);
+						setEditorState("playbackLoop", "enabled", false);
+					})
+					.finally(() => setLoopRestarting(false));
+			}
+			return;
+		}
 		if (isAtEnd() && playbackIntent()) {
 			const pending = requestHandoffPlayback(false);
 			if (pending) return;
@@ -264,28 +335,39 @@ export function PlayerContent(props: { compactness?: number }) {
 	});
 
 	const handlePlayPauseClick = async () => {
-		const pending = requestHandoffPlayback(
-			isAtEnd() || !playbackIntent(),
-			isAtEnd() ? 0 : undefined,
-		);
+		loopRestart.cancel();
+		if (loopRestarting() && playbackIntent()) {
+			setEditorState("playing", false);
+			const pending = requestHandoffPlayback(false);
+			await (pending ?? commands.stopPlayback());
+			return;
+		}
+		const replayFromEnd = isAtEnd() && !activeLoop();
+		const shouldPlay = replayFromEnd || !playbackIntent();
+		const target = shouldPlay
+			? (loopRestartTime(
+					editorState.playbackLoop,
+					totalDuration(),
+					editorState.playbackTime,
+					FPS,
+				) ?? (replayFromEnd ? 0 : editorState.playbackTime))
+			: undefined;
+		const pending = requestHandoffPlayback(shouldPlay, target);
 		if (pending) {
 			await pending;
 			return;
 		}
 		try {
-			if (isAtEnd()) {
+			if (shouldPlay) {
 				await commands.stopPlayback();
-				setEditorState("playbackTime", 0);
-				await commands.seekTo(0);
+				const seconds = target ?? editorState.playbackTime;
+				setEditorState("playbackTime", seconds);
+				await commands.seekTo(Math.floor(seconds * FPS));
 				await commands.startPlayback(FPS, previewResolutionBase());
 				setEditorState("playing", true);
-			} else if (editorState.playing) {
-				await commands.stopPlayback();
-				setEditorState("playing", false);
 			} else {
-				await commands.seekTo(Math.floor(editorState.playbackTime * FPS));
-				await commands.startPlayback(FPS, previewResolutionBase());
-				setEditorState("playing", true);
+				setEditorState("playing", false);
+				await commands.stopPlayback();
 			}
 			if (editorState.playing) setEditorState("previewTime", null);
 		} catch (error) {
@@ -329,6 +411,15 @@ export function PlayerContent(props: { compactness?: number }) {
 					"interactMode",
 					editorState.timeline.interactMode === "split" ? "seek" : "split",
 				),
+		},
+		{ combo: "L", handler: toggleLoop },
+		{ combo: "I", handler: () => setLoopEdgeAtPlayhead("start") },
+		{ combo: "O", handler: () => setLoopEdgeAtPlayhead("end") },
+		{
+			combo: "B",
+			when: canCompareVoice,
+			handler: () =>
+				setEditorState("audioPreviewBypass", !editorState.audioPreviewBypass),
 		},
 		{
 			combo: "Mod+=",
@@ -467,9 +558,14 @@ export function PlayerContent(props: { compactness?: number }) {
 						<button
 							type="button"
 							onClick={handlePlayPauseClick}
+							aria-label={
+								playbackIntent() && (!isAtEnd() || activeLoop())
+									? "Pause"
+									: "Play"
+							}
 							class="flex justify-center items-center rounded-full transition-opacity size-8 bg-ed-text-1 text-ed-card hover:opacity-90"
 						>
-							{!playbackIntent() || isAtEnd() ? (
+							{!playbackIntent() || (isAtEnd() && !activeLoop()) ? (
 								<IconCapPlay class="size-3" />
 							) : (
 								<IconCapPause class="size-3" />
@@ -494,6 +590,69 @@ export function PlayerContent(props: { compactness?: number }) {
 					</button>
 				</div>
 				<div class="flex flex-row flex-1 gap-0.5 justify-end items-center min-w-fit">
+					<Show when={canCompareVoice()}>
+						<Tooltip
+							kbd={["B"]}
+							content="Compare with the original microphone audio"
+						>
+							<div
+								role="group"
+								aria-label="Voice preview"
+								class="flex p-0.5 mr-1 text-[11px] rounded-md bg-ed-ctl"
+							>
+								<For each={[false, true]}>
+									{(bypass) => (
+										<button
+											type="button"
+											aria-pressed={editorState.audioPreviewBypass === bypass}
+											class={cx(
+												"px-2 h-5 rounded-[5px] transition-colors",
+												editorState.audioPreviewBypass === bypass
+													? "bg-ed-card text-ed-text-1 shadow-[0_1px_2px_rgba(0,0,0,0.12)] dark:bg-white/12"
+													: "text-ed-text-3 hover:text-ed-text-1",
+											)}
+											onClick={() =>
+												setEditorState("audioPreviewBypass", bypass)
+											}
+										>
+											{bypass ? "Original" : "Processed"}
+										</button>
+									)}
+								</For>
+							</div>
+						</Tooltip>
+					</Show>
+					<Tooltip
+						kbd={["L"]}
+						content={
+							activeLoop()
+								? "Stop looping. Shift-drag the ruler to draw a new range."
+								: "Loop preview. Shift-drag the ruler or press I / O to set the range."
+						}
+					>
+						<button
+							type="button"
+							aria-pressed={!!activeLoop()}
+							aria-label="Loop preview"
+							disabled={totalDuration() < 0.1}
+							onClick={toggleLoop}
+							class={cx(
+								"flex gap-1 items-center px-1.5 h-7 text-[11px] font-medium tabular-nums rounded-md transition-colors disabled:opacity-40",
+								activeLoop()
+									? "bg-amber-400/15 text-amber-500 dark:text-amber-300"
+									: "text-ed-text-2 hover:bg-ed-ctl hover:text-ed-text-1",
+							)}
+						>
+							<IconLucideRepeat class="size-3.5" />
+							<Show when={activeLoop()}>
+								{(range) => (
+									<span>
+										{formatTime(range().start)}–{formatTime(range().end)}
+									</span>
+								)}
+							</Show>
+						</button>
+					</Tooltip>
 					<EditorButton<typeof KToggleButton>
 						tooltipText="Toggle Split"
 						kbd={["S"]}

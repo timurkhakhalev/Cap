@@ -37,11 +37,19 @@ const toggleThumbStyles = cva(
 export function Toggle(
 	props: ComponentProps<typeof KSwitch> & { size?: "sm" | "md" | "lg" },
 ) {
-	const [local, others] = splitProps(props, ["size"]);
+	const [local, others] = splitProps(props, [
+		"size",
+		"aria-label",
+		"aria-labelledby",
+	]);
 
 	return (
 		<KSwitch class="relative" {...others}>
-			<KSwitch.Input class="peer absolute inset-0 opacity-0" />
+			<KSwitch.Input
+				aria-label={local["aria-label"]}
+				aria-labelledby={local["aria-labelledby"]}
+				class="peer absolute inset-0 opacity-0"
+			/>
 			<KSwitch.Control class={toggleControlStyles({ size: local.size })}>
 				<KSwitch.Thumb class={toggleThumbStyles({ size: local.size })} />
 			</KSwitch.Control>

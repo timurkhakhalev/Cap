@@ -1,6 +1,7 @@
 import { createQuery } from "@tanstack/solid-query";
 import { Store } from "@tauri-apps/plugin-store";
 import { onCleanup } from "solid-js";
+import type { AudioPreset } from "~/utils/audio-presets";
 import type { AutomationsStore } from "~/utils/automations";
 import {
 	type GeneralSettingsStore,
@@ -10,6 +11,7 @@ import {
 import { createSerializedStore } from "~/utils/serialized-store";
 import type {
 	AnimatedGradientLibrary,
+	AudioFilters,
 	AuthStore,
 	HotkeysStore,
 	PresetsStore,
@@ -102,9 +104,14 @@ function declareStore<T extends object>(name: string, defaults?: T) {
 export const audioEnhancementStore = declareStore<{
 	enabledByDefault: boolean;
 	isolation: VoiceIsolation;
+	filters?: AudioFilters;
 }>("audio_enhancement", { enabledByDefault: true, isolation: "balanced" });
 
 export const presetsStore = declareStore<PresetsStore>("presets");
+export const audioPresetsStore = declareStore<{ presets: AudioPreset[] }>(
+	"audio_filter_presets",
+	{ presets: [] },
+);
 const animatedGradientDefaults: AnimatedGradientLibrary = {
 	presets: [],
 	lastUsed: null,

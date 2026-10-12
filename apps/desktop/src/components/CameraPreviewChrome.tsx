@@ -1,4 +1,5 @@
 import { ToggleButton as KToggleButton } from "@kobalte/core/toggle-button";
+import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
 import { type as ostype } from "@tauri-apps/plugin-os";
 import { cx } from "cva";
 import {
@@ -53,6 +54,7 @@ export const cameraPreviewAspectRatio = (
 	shape: CameraPreviewShape,
 	frameAspectRatio?: number | null,
 ) => {
+	if (shape === "portrait") return 9 / 16;
 	if (shape !== "full") return 1;
 	if (
 		typeof frameAspectRatio === "number" &&
@@ -72,10 +74,36 @@ export const cameraPreviewDimensions = (
 	const base = clampCameraSize(size);
 	const aspectRatio = cameraPreviewAspectRatio(shape, frameAspectRatio);
 	return {
-		height: base,
-		width: base * aspectRatio,
+		height: base / Math.min(aspectRatio, 1),
+		width: base * Math.max(aspectRatio, 1),
 	};
 };
+
+export function cameraResizeSize(
+	size: number,
+	dimensions: { width: number; height: number },
+	corner: ResizeCorner,
+	delta: { x: number; y: number },
+) {
+	const dx =
+		(delta.x * (corner.includes("e") ? 1 : -1) * size) / dimensions.width;
+	const dy =
+		(delta.y * (corner.includes("s") ? 1 : -1) * size) / dimensions.height;
+	return clampCameraSize(size + (Math.abs(dx) > Math.abs(dy) ? dx : dy));
+}
+
+export function cameraResizePosition(
+	position: { x: number; y: number },
+	dimensions: { width: number; height: number },
+	corner: ResizeCorner,
+	scale: number,
+) {
+	return {
+		x: position.x + (corner.includes("w") ? dimensions.width * (1 - scale) : 0),
+		y:
+			position.y + (corner.includes("n") ? dimensions.height * (1 - scale) : 0),
+	};
+}
 
 export const normalizeBackgroundBlurMode = (
 	mode: BackgroundBlurMode | boolean | undefined,
@@ -173,7 +201,9 @@ export function CameraPreviewToolbar(props: {
 							? "square"
 							: shape === "square"
 								? "full"
-								: "round",
+								: shape === "full"
+									? "portrait"
+									: "round",
 					)
 				}
 			>
@@ -181,6 +211,9 @@ export function CameraPreviewToolbar(props: {
 				{props.state.shape === "square" && <IconCapSquare class="size-5.5" />}
 				{props.state.shape === "full" && (
 					<IconLucideRectangleHorizontal class="size-5.5" />
+				)}
+				{props.state.shape === "portrait" && (
+					<IconLucideRectangleVertical class="size-5.5" />
 				)}
 			</ControlButton>
 			<ControlButton
@@ -244,19 +277,30 @@ export function CameraResizeHandles(props: {
 		size: 0,
 		x: 0,
 		y: 0,
+		windowX: 0,
+		windowY: 0,
+		width: 0,
+		height: 0,
 		corner: "nw" as ResizeCorner,
 	});
+	let handlesRef: HTMLDivElement | undefined;
 
 	const handleResizeStart = (corner: ResizeCorner) => (e: MouseEvent) => {
-		if (e.button !== 0) return;
+		if (e.button !== 0 || !handlesRef) return;
+		const { width, height } = handlesRef.getBoundingClientRect();
+		if (width <= 0 || height <= 0) return;
 		e.preventDefault();
 		e.stopPropagation();
 		setIsResizing(true);
 		setActiveCorner(corner);
 		setResizeStart({
 			size: props.state.size,
-			x: e.clientX,
-			y: e.clientY,
+			x: e.screenX,
+			y: e.screenY,
+			windowX: e.screenX - e.clientX,
+			windowY: e.screenY - e.clientY,
+			width,
+			height,
 			corner,
 		});
 	};
@@ -264,20 +308,22 @@ export function CameraResizeHandles(props: {
 	const handleResizeMove = (e: MouseEvent) => {
 		if (!isResizing()) return;
 		const start = resizeStart();
-		const deltaX = e.clientX - start.x;
-		const deltaY = e.clientY - start.y;
-
-		const hasE = start.corner.includes("e");
-		const hasW = start.corner.includes("w");
-		const hasS = start.corner.includes("s");
-		const hasN = start.corner.includes("n");
-
-		const dx = hasE ? deltaX : hasW ? -deltaX : 0;
-		const dy = hasS ? deltaY : hasN ? -deltaY : 0;
-
-		const delta = (hasE || hasW) && (hasN || hasS) ? Math.max(dx, dy) : dx + dy;
-
-		props.setState("size", clampCameraSize(start.size + delta));
+		const size = cameraResizeSize(start.size, start, start.corner, {
+			x: e.screenX - start.x,
+			y: e.screenY - start.y,
+		});
+		const position = cameraResizePosition(
+			{ x: start.windowX, y: start.windowY },
+			start,
+			start.corner,
+			size / start.size,
+		);
+		props.setState("size", size);
+		void getCurrentWindow()
+			.setPosition(new LogicalPosition(position.x, position.y))
+			.catch((error) =>
+				console.error("Failed to position resized camera", error),
+			);
 	};
 
 	const handleResizeEnd = () => {
@@ -289,14 +335,17 @@ export function CameraResizeHandles(props: {
 		if (!isResizing()) return;
 		window.addEventListener("mousemove", handleResizeMove);
 		window.addEventListener("mouseup", handleResizeEnd);
+		window.addEventListener("blur", handleResizeEnd);
 		onCleanup(() => {
 			window.removeEventListener("mousemove", handleResizeMove);
 			window.removeEventListener("mouseup", handleResizeEnd);
+			window.removeEventListener("blur", handleResizeEnd);
 		});
 	});
 
 	return (
 		<div
+			ref={handlesRef}
 			class="pointer-events-none absolute inset-x-0 bottom-0 z-20"
 			style={{ top: `${props.toolbarHeight}px` }}
 		>

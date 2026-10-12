@@ -68,6 +68,11 @@ import { type CaptionSegmentDragState, CaptionsTrack } from "./CaptionsTrack";
 import { ClipTrack } from "./ClipTrack";
 import { TimelineContextProvider, useTimelineContext } from "./context";
 import { type KeyboardSegmentDragState, KeyboardTrack } from "./KeyboardTrack";
+import {
+	createLoopEditing,
+	LoopRulerRegion,
+	LoopTrackShade,
+} from "./LoopRegion";
 import { type MaskSegmentDragState, MaskTrack } from "./MaskTrack";
 import { Minimap } from "./Minimap";
 import { PlaybackFollow } from "./playback-follow";
@@ -220,6 +225,7 @@ export function Timeline(props: {
 	const timelineBounds = createElementBounds(timelineRef);
 
 	const secsPerPixel = () => transform().zoom / (timelineBounds.width ?? 1);
+	const loopEditing = createLoopEditing(secsPerPixel);
 	const playbackFollow = new PlaybackFollow();
 	const playbackDuration = createMemo(totalDuration);
 	let followRafId: number | null = null;
@@ -1061,6 +1067,18 @@ export function Timeline(props: {
 		}
 	}
 
+	function rulerTimeAt(clientX: number) {
+		const metrics = getTimelineContentMetrics();
+		if (!metrics) return null;
+		return Math.min(
+			Math.max(
+				0,
+				secsPerPixel() * (clientX - metrics.left) + transform().position,
+			),
+			totalDuration(),
+		);
+	}
+
 	function beginRulerScrub(downEvent: MouseEvent) {
 		if (downEvent.button !== 0) return;
 		downEvent.stopPropagation();
@@ -1401,9 +1419,24 @@ export function Timeline(props: {
 					<div
 						class="absolute inset-y-0 right-0 z-40"
 						style={{ left: `${TRACK_GUTTER - RULER_SCRUB_OVERHANG_PX}px` }}
-						onMouseDown={beginRulerScrub}
+						title="Drag to scrub. Shift-drag to set a loop preview range."
+						onMouseDown={(event) =>
+							event.shiftKey
+								? loopEditing.begin("draw", event, rulerTimeAt)
+								: beginRulerScrub(event)
+						}
+					/>
+					<LoopRulerRegion
+						loop={loopEditing}
+						left={TRACK_GUTTER}
+						timeAt={rulerTimeAt}
 					/>
 				</div>
+				<LoopTrackShade
+					loop={loopEditing}
+					left={TRACK_GUTTER}
+					top={TIMELINE_HEADER_HEIGHT}
+				/>
 				<Show
 					when={
 						!playbackIntent() &&

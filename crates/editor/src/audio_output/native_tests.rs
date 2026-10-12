@@ -820,3 +820,169 @@ fn studio_sound_refresh_changes_live_pcm_and_cannot_restart_stopped_audio() {
     }
     output.shutdown();
 }
+
+#[test]
+fn independent_compressor_refresh_is_audible_and_smooth() {
+    let settings = cap_project::AudioFilters {
+        noise_reduction: false,
+        auto_level: false,
+        compressor: false,
+        limiter: false,
+        ..Default::default()
+    };
+    let mut original = audible_spec_with_duration(10);
+    original.project.audio.improve = true;
+    original.project.audio.filters = settings;
+    let mut compressed = audible_spec_with_duration(10);
+    compressed.project.audio.improve = true;
+    compressed.project.audio.filters = cap_project::AudioFilters {
+        compressor: true,
+        threshold_db: -30.0,
+        ratio: 8.0,
+        ..settings
+    };
+    let (tx, rx) = std_mpsc::channel();
+    let output = AudioOutput::new_headless(Box::new(move |samples, _| {
+        let _ = tx.send(samples.to_vec());
+    }));
+    let generation = output.play(original).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut previous = loop {
+        let block = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if block.iter().all(|sample| *sample > 0.1) {
+            break *block.last().unwrap();
+        }
+    };
+    let changed = Instant::now();
+    output.refresh_playback(compressed, generation);
+    let mut max_step = 0.0_f32;
+    loop {
+        let block = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        for &sample in &block {
+            max_step = max_step.max((sample - previous).abs());
+            previous = sample;
+        }
+        if block.iter().all(|sample| *sample > 0.005 && *sample < 0.06) {
+            break;
+        }
+    }
+    output.stop_playback(generation);
+    output.shutdown();
+    assert!(
+        max_step < 0.01,
+        "parameter change produced a jump of {max_step}"
+    );
+    assert!(
+        changed.elapsed() < Duration::from_secs(1),
+        "filter update took {:?}",
+        changed.elapsed()
+    );
+}
+
+#[test]
+fn rapid_filter_refresh_reaches_latest_settings_without_silence() {
+    let settings = cap_project::AudioFilters {
+        noise_reduction: false,
+        auto_level: false,
+        compressor: true,
+        limiter: false,
+        threshold_db: -30.0,
+        ..Default::default()
+    };
+    let make_spec = |ratio| {
+        let mut spec = audible_spec_with_duration(10);
+        spec.project.audio.improve = true;
+        spec.project.audio.filters = cap_project::AudioFilters { ratio, ..settings };
+        spec
+    };
+    let reference = make_spec(8.0);
+    let mut renderer = crate::AudioRenderer::new(reference.segments);
+    let (_, reference_samples) = renderer
+        .render_frame_raw(48_000, &reference.project)
+        .unwrap();
+    let expected = *reference_samples.last().unwrap();
+    let (tx, rx) = std_mpsc::channel();
+    let output = AudioOutput::new_headless(Box::new(move |samples, _| {
+        let _ = tx.send(samples.to_vec());
+    }));
+    let generation = output.play(make_spec(1.0)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let block = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if block.iter().all(|sample| *sample > 0.1) {
+            break;
+        }
+    }
+    let changed = Instant::now();
+    for step in 1..=24 {
+        output.refresh_playback(make_spec(1.0 + 7.0 * step as f32 / 24.0), generation);
+    }
+    loop {
+        let block = rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        assert!(
+            block
+                .iter()
+                .all(|sample| sample.is_finite() && *sample > 0.005)
+        );
+        if block
+            .iter()
+            .all(|sample| (*sample - expected).abs() < 0.0001)
+        {
+            break;
+        }
+    }
+    output.stop_playback(generation);
+    output.shutdown();
+    assert!(changed.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+#[ignore = "requires CAP_STUDIO_SOUND_TEST_AUDIO pointing to a local microphone excerpt"]
+fn real_voice_auto_level_slider_reaches_latest_profile_promptly() {
+    ffmpeg::init().unwrap();
+    let path = std::env::var_os("CAP_STUDIO_SOUND_TEST_AUDIO").unwrap();
+    let data = Arc::new(cap_audio::DecodedAudio::from(Arc::new(
+        AudioData::from_file(std::path::Path::new(&path)).unwrap(),
+    )));
+    let duration_secs = data.sample_count() as f64 / 48_000.0;
+    let make_spec = |target_lufs| {
+        let (_, playhead_rx) = watch::channel(0.0);
+        let mut project = ProjectConfiguration::default();
+        project.audio.improve = true;
+        project.audio.filters.target_lufs = target_lufs;
+        PlaySpec {
+            segments: vec![crate::audio_segment_from_decoded(
+                Some(data.clone()),
+                None,
+                crate::SegmentAudioTimingRepair::default(),
+            )],
+            music: MusicTracks::new(),
+            project,
+            duration_secs,
+            start_playhead_secs: 0.0,
+            playhead_rx,
+        }
+    };
+    let output = AudioOutput::new_headless(Box::new(|samples, _| {
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+    }));
+    let generation = output.play(make_spec(-30.0)).unwrap();
+    let changed = Instant::now();
+    for target in -29..=-10 {
+        output.refresh_playback(make_spec(target as f32), generation);
+    }
+    let latest_generation = output.play(make_spec(-10.0)).unwrap();
+    let elapsed = changed.elapsed();
+    output.stop_playback(latest_generation);
+    output.shutdown();
+    eprintln!("20 real-voice auto-level updates: {elapsed:?}");
+    assert!(elapsed < Duration::from_secs(1));
+}

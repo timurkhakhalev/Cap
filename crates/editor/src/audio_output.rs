@@ -514,8 +514,40 @@ struct ActiveSource<T: FromSampleBytes> {
     playhead_rx: watch::Receiver<f64>,
     ack: Option<SourceAcknowledgement>,
     preparing_request: Option<Arc<PreparingAudioRequest>>,
+    crossfade: AudioRefreshCrossfade<T>,
     #[cfg(not(target_os = "windows"))]
     latency_corrector: LatencyCorrector,
+}
+
+struct AudioRefreshCrossfade<T> {
+    samples: Vec<T>,
+    position: usize,
+    channels: usize,
+}
+
+impl<T: FromSampleBytes + cpal::FromSample<f32>> AudioRefreshCrossfade<T> {
+    fn new(sample_rate: u32, channels: usize) -> Self {
+        let count = (sample_rate as usize / 100).max(2) * channels;
+        Self {
+            samples: vec![T::EQUILIBRIUM; count],
+            position: count,
+            channels,
+        }
+    }
+
+    fn apply(&mut self, output: &mut [T]) {
+        let frames = self.samples.len() / self.channels;
+        let count = output
+            .len()
+            .min(self.samples.len().saturating_sub(self.position));
+        for sample in output.iter_mut().take(count) {
+            let wet = (self.position / self.channels) as f32 / (frames - 1) as f32;
+            *sample = T::from_sample(
+                self.samples[self.position].to_f32() * (1.0 - wet) + sample.to_f32() * wet,
+            );
+            self.position += 1;
+        }
+    }
 }
 
 enum ActiveSourceBuffer<T: FromSampleBytes> {
@@ -571,11 +603,44 @@ struct StreamState {
     handle: TypedStreamHandle,
 }
 
+fn next_control_message(
+    receiver: &std_mpsc::Receiver<ControlMsg>,
+    pending: &mut Option<ControlMsg>,
+) -> Option<ControlMsg> {
+    let mut latest = pending.take().or_else(|| receiver.recv().ok())?;
+    while let ControlMsg::Refresh {
+        generation,
+        revision,
+        ..
+    } = &latest
+    {
+        let Ok(next) = receiver.try_recv() else {
+            break;
+        };
+        if let ControlMsg::Refresh {
+            generation: next_generation,
+            revision: next_revision,
+            ..
+        } = &next
+            && next_generation == generation
+        {
+            if next_revision > revision {
+                latest = next;
+            }
+        } else {
+            *pending = Some(next);
+            break;
+        }
+    }
+    Some(latest)
+}
+
 fn control_thread(control_rx: std_mpsc::Receiver<ControlMsg>) {
     // cpal streams aren't Send; this thread owns the stream for its lifetime.
     let mut state: Option<StreamState> = None;
 
-    while let Ok(msg) = control_rx.recv() {
+    let mut pending = None;
+    while let Some(msg) = next_control_message(&control_rx, &mut pending) {
         match msg {
             ControlMsg::Refresh {
                 spec,
@@ -702,7 +767,7 @@ fn drain_source_commands<T: FromSampleBytes + cpal::FromSample<f32>>(
                     if let (
                         ActiveSourceBuffer::Ordinary(previous),
                         ActiveSourceBuffer::Ordinary(replacement),
-                    ) = (&current.buffer, &mut source.buffer)
+                    ) = (&mut current.buffer, &mut source.buffer)
                     {
                         let playhead = previous.current_audible_playhead(0.0);
                         if !replacement.try_align_prepared_playhead(playhead) {
@@ -723,6 +788,9 @@ fn drain_source_commands<T: FromSampleBytes + cpal::FromSample<f32>>(
                             })));
                             continue;
                         }
+                        previous.fill(&mut source.crossfade.samples);
+                        current.crossfade.apply(&mut source.crossfade.samples);
+                        source.crossfade.position = 0;
                     }
                     active.replace(*source).map(Box::new)
                 } else {
@@ -804,6 +872,8 @@ fn render_source_block<T: FromSampleBytes + cpal::FromSample<f32>>(
             }
         }
     }
+
+    source.crossfade.apply(buffer);
 
     if source
         .preparing_request
@@ -932,6 +1002,10 @@ fn install_source<T: FromSampleBytes + cpal::FromSample<f32>>(
         playhead_rx,
         ack: Some(ack),
         preparing_request,
+        crossfade: AudioRefreshCrossfade::new(
+            output_info.sample_rate,
+            output_info.channels as usize,
+        ),
         #[cfg(not(target_os = "windows"))]
         latency_corrector,
     });
@@ -996,6 +1070,10 @@ fn install_progressive_source<T: FromSampleBytes + cpal::FromSample<f32>>(
             playhead_rx,
             ack: Some(SourceAcknowledgement::Preparing(request.clone())),
             preparing_request: Some(request.clone()),
+            crossfade: AudioRefreshCrossfade::new(
+                output_info.sample_rate,
+                output_info.channels as usize,
+            ),
             #[cfg(not(target_os = "windows"))]
             latency_corrector,
         })))
@@ -1055,7 +1133,8 @@ fn control_thread_headless(control_rx: std_mpsc::Receiver<ControlMsg>, mut tap: 
         }
     };
 
-    while let Ok(msg) = control_rx.recv() {
+    let mut pending = None;
+    while let Some(msg) = next_control_message(&control_rx, &mut pending) {
         match msg {
             ControlMsg::Refresh {
                 spec,
@@ -1347,6 +1426,83 @@ mod native_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_queue_keeps_latest_revision_and_preserves_control_boundaries() {
+        let (sender, receiver) = std_mpsc::channel();
+        let refresh = |generation, revision| ControlMsg::Refresh {
+            spec: Box::new(PlaySpec {
+                segments: Vec::new(),
+                music: MusicTracks::new(),
+                project: ProjectConfiguration::default(),
+                duration_secs: 1.0,
+                start_playhead_secs: 0.0,
+                playhead_rx: watch::channel(0.0).1,
+            }),
+            generation,
+            revision,
+            retire_tx: sender.clone(),
+        };
+        for revision in [1, 3, 2] {
+            sender.send(refresh(1, revision)).unwrap();
+        }
+        sender
+            .send(ControlMsg::StopPlayback { generation: 1 })
+            .unwrap();
+        sender.send(refresh(2, 4)).unwrap();
+        sender.send(refresh(3, 5)).unwrap();
+        let mut pending = None;
+        assert!(matches!(
+            next_control_message(&receiver, &mut pending),
+            Some(ControlMsg::Refresh {
+                generation: 1,
+                revision: 3,
+                ..
+            })
+        ));
+        assert!(matches!(
+            next_control_message(&receiver, &mut pending),
+            Some(ControlMsg::StopPlayback { generation: 1 })
+        ));
+        assert!(matches!(
+            next_control_message(&receiver, &mut pending),
+            Some(ControlMsg::Refresh {
+                generation: 2,
+                revision: 4,
+                ..
+            })
+        ));
+        assert!(matches!(
+            next_control_message(&receiver, &mut pending),
+            Some(ControlMsg::Refresh {
+                generation: 3,
+                revision: 5,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn filter_refresh_crossfade_is_continuous_across_callback_blocks() {
+        let mut fade = AudioRefreshCrossfade::<f32>::new(48_000, 2);
+        fade.samples.fill(0.5);
+        fade.position = 0;
+        let mut samples = vec![-0.5; 1200];
+        for block in samples.chunks_mut(146) {
+            fade.apply(block);
+        }
+        assert_eq!(samples[0], 0.5);
+        assert_eq!(samples[958], -0.5);
+        assert!(samples[960..].iter().all(|sample| *sample == -0.5));
+        for frame in samples.chunks_exact(2) {
+            assert_eq!(frame[0], frame[1]);
+        }
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| (pair[1] - pair[0]).abs() < 0.003)
+        );
+    }
 
     pub(super) fn source(sample_rate: u32) -> (ActiveSource<f32>, watch::Sender<f64>) {
         source_with_info(

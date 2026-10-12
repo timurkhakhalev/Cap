@@ -684,7 +684,8 @@ export type AnnotationType = "arrow" | "circle" | "rectangle" | "text" | "mask" 
 export type AppTheme = "system" | "light" | "dark"
 export type AspectRatio = "wide" | "vertical" | "square" | "classic" | "tall"
 export type Audio = { duration: number; sample_rate: number; channels: number; start_time: number }
-export type AudioConfiguration = { mute: boolean; improve: boolean; isolation: VoiceIsolation; micVolumeDb: number; micStereoMode: StereoMode; systemVolumeDb: number }
+export type AudioConfiguration = { mute: boolean; improve: boolean; isolation: VoiceIsolation; filters: AudioFilters; micVolumeDb: number; micStereoMode: StereoMode; systemVolumeDb: number }
+export type AudioFilters = { noiseReduction: boolean; autoLevel: boolean; targetLufs: number; compressor: boolean; thresholdDb: number; ratio: number; attackMs: number; releaseMs: number; limiter: boolean; ceilingDb: number }
 /**
  * Overlap-trim accounting captured by the recorder's audio gap tracker, persisted so the
  * editor can compensate for stale-startup audio drift from typed data instead of scraping
@@ -879,9 +880,9 @@ export type CameraInfo = { device_id: string; model_id: ModelIDType | null; disp
 export type CameraPosition = { x: CameraXPosition; y: CameraYPosition }
 export type CameraPresentationInput = { viewportWidth: number; viewportHeight: number; left: number; top: number; width: number; height: number; radius: number; layoutRevision: number; state: CameraPreviewState }
 export type CameraPresentationRequested = { nonce: string; generation: number; cameraRevision: string }
-export type CameraPreviewShape = "round" | "square" | "full"
+export type CameraPreviewShape = "round" | "square" | "full" | "portrait"
 export type CameraPreviewState = { size: number; shape: CameraPreviewShape; mirrored: boolean; background_blur?: BackgroundBlurMode }
-export type CameraShape = "square" | "source"
+export type CameraShape = "square" | "source" | "portrait"
 export type CameraWithFormats = { deviceId: string; displayName: string; modelId: string | null; formats: CameraFormatInfo[]; bestFormat: CameraFormatInfo | null }
 export type CameraXPosition = "left" | "center" | "right"
 export type CameraYPosition = "top" | "bottom"

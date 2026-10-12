@@ -5057,8 +5057,7 @@ async fn set_project_config(
     editor_instance: WindowEditorInstance,
     config: ProjectConfiguration,
 ) -> Result<(), String> {
-    editor_instance.project_config.0.send(config.clone()).ok();
-
+    // Autosave must not replace temporary preview overrides sent by the preview command.
     config
         .write(&editor_instance.project_path)
         .map_err(|error| format!("Failed to write project config: {error}"))?;
@@ -7276,7 +7275,6 @@ pub async fn run(recording_logging_handle: LoggingHandle, logs_dir: Option<PathB
             app.manage(FinalizingRecordings::default());
             app.manage(editor_preparing::PreparingConsumers::default());
             app.manage(updates::UpdatesState::default());
-            updates::spawn_background_loop(app.clone());
 
             #[cfg(unix)]
             {

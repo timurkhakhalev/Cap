@@ -6525,9 +6525,15 @@ fn apply_studio_sound_default(app: &AppHandle, config: &mut ProjectConfiguration
     {
         config.audio.improve = true;
         config.audio.isolation = audio_enhancement
+            .as_ref()
             .and_then(|value| value.get("isolation").cloned())
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
+        config.audio.filters = audio_enhancement
+            .and_then(|value| value.get("filters").cloned())
+            .and_then(|value| serde_json::from_value::<cap_project::AudioFilters>(value).ok())
+            .unwrap_or_default()
+            .validated();
     }
 }
 
@@ -6708,6 +6714,10 @@ fn apply_recording_camera_preview_state(
         }
         CameraPreviewShape::Full => {
             config.camera.shape = CameraShape::Source;
+            config.camera.rounding = 25.0;
+        }
+        CameraPreviewShape::Portrait => {
+            config.camera.shape = CameraShape::Portrait;
             config.camera.rounding = 25.0;
         }
     }
@@ -10383,6 +10393,7 @@ mod preparing_presentation_parity_tests {
             (CameraPreviewShape::Round, CameraShape::Square, 100.0),
             (CameraPreviewShape::Square, CameraShape::Square, 25.0),
             (CameraPreviewShape::Full, CameraShape::Source, 25.0),
+            (CameraPreviewShape::Portrait, CameraShape::Portrait, 25.0),
         ] {
             for blur in [
                 cap_project::BackgroundBlurMode::Off,
