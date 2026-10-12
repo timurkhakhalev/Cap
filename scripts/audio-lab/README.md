@@ -6,14 +6,15 @@ launches Cap or writes into the source recording.
 
 ## Editor tuning
 
-The audio panel keeps detailed filter controls under **Advanced tuning**.
+The audio panel keeps detailed filter controls in expandable summary rows.
 Named audio presets are saved in the local application store and can be applied
 to other recordings. They include processing, noise strength, filter parameters
 and microphone gain; muting and other audio tracks stay unchanged.
 
-**Loop preview** repeats an output-timeline range. Set its boundaries in seconds
-or use the playhead, then press Play. The player shows the active range and can
-turn repetition off. Loops are temporary editor state and never affect exports.
+**Loop preview** repeats an output-timeline range. Shift-drag the ruler to draw
+one, drag its handles to resize, or move the top bar. The player toggles looping
+with `L`; `I` and `O` set edges at the playhead. Loops are temporary editor state
+and never affect exports. `B` compares processed and original microphone audio.
 Playback restarts at each boundary, so this is not a gapless audio loop.
 
 ## Prepare once

@@ -50,6 +50,7 @@ import {
 	audioPresetsStore,
 	generalSettingsStore,
 } from "~/store";
+import { studioSoundFilters } from "~/utils/audio-filter-settings";
 import { audioPresetSettings } from "~/utils/audio-presets";
 import {
 	createSelectedOrganization,
@@ -88,9 +89,8 @@ import {
 	AnimatedGradientEditor,
 	copyAnimatedGradientConfig,
 } from "./AnimatedGradientEditor";
-import { AudioFiltersCard } from "./AudioFiltersCard";
+import { AudioFiltersCard, formatVolumeDb } from "./AudioFiltersCard";
 import { AudioLibraryPanel } from "./AudioLibrary";
-import { AudioLoopControls } from "./AudioLoopControls";
 import { AudioPresets } from "./AudioPresets";
 import {
 	AUDIO_TRACK_BG_CLASS,
@@ -360,9 +360,6 @@ type CursorPresetValues = {
 
 const DEFAULT_MOTION_BLUR = 1.0;
 
-const formatVolumeDb = (value: number) =>
-	value <= -30 ? "Muted" : `${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
-
 const CURSOR_ANIMATION_STYLE_OPTIONS = [
 	{
 		value: "slow",
@@ -454,7 +451,7 @@ export function ConfigSidebar() {
 }
 
 function StudioSoundCard() {
-	const { project, setProject, editorState, setEditorState, totalDuration } =
+	const { project, setProject, editorState, setEditorState } =
 		useEditorContext();
 	const [savingDefault, setSavingDefault] = createSignal(false);
 	const presets = audioPresetsStore.createQuery();
@@ -469,27 +466,35 @@ function StudioSoundCard() {
 				setEditorState("audioPreviewBypass", false);
 				setProject("audio", patch);
 			}}
-			savingDefault={savingDefault()}
-			onSaveDefault={async () => {
-				setSavingDefault(true);
-				try {
-					await audioEnhancementStore.set({
-						enabledByDefault: project.audio.improve,
-						isolation: project.audio.isolation,
-						filters: { ...project.audio.filters },
-					});
-					toast.success("Audio defaults saved for new recordings");
-				} catch {
-					toast.error("Could not save audio defaults");
-				} finally {
-					setSavingDefault(false);
-				}
-			}}
 		>
 			<AudioPresets
+				savingDefault={savingDefault()}
+				onSaveDefault={async () => {
+					setSavingDefault(true);
+					try {
+						await audioEnhancementStore.set({
+							enabledByDefault: project.audio.improve,
+							isolation: project.audio.isolation,
+							filters: { ...project.audio.filters },
+						});
+						toast.success("Audio defaults saved for new recordings");
+					} catch {
+						toast.error("Could not save audio defaults");
+					} finally {
+						setSavingDefault(false);
+					}
+				}}
 				audio={project.audio}
 				presets={presets.data?.presets ?? []}
 				loading={presets.isPending || presets.isError}
+				onApplyStudioSound={() => {
+					setEditorState("audioPreviewBypass", false);
+					setProject("audio", {
+						improve: true,
+						isolation: "balanced",
+						filters: { ...studioSoundFilters },
+					});
+				}}
 				onApply={(preset) => {
 					setEditorState("audioPreviewBypass", false);
 					setProject("audio", {
@@ -529,12 +534,6 @@ function StudioSoundCard() {
 					Could not load presets. Retry
 				</button>
 			</Show>
-			<AudioLoopControls
-				loop={editorState.playbackLoop}
-				duration={totalDuration()}
-				playhead={editorState.playbackTime}
-				onChange={(loop) => setEditorState("playbackLoop", loop)}
-			/>
 		</AudioFiltersCard>
 	);
 }
@@ -819,25 +818,6 @@ function ConfigSidebarContent() {
 							<StudioSoundCard />
 						</Show>
 					</Section>
-					{meta().hasMicrophone && (
-						<Field
-							inline
-							name="Microphone Volume"
-							value={formatVolumeDb(project.audio.micVolumeDb ?? 0)}
-						>
-							<Slider
-								disabled={project.audio.mute}
-								value={[project.audio.micVolumeDb ?? 0]}
-								onChange={(v) => setProject("audio", "micVolumeDb", v[0])}
-								minValue={-30}
-								maxValue={10}
-								step={0.1}
-								formatTooltip={(v) =>
-									v <= -30 ? "Muted" : `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`
-								}
-							/>
-						</Field>
-					)}
 					{meta().hasSystemAudio && (
 						<Field
 							inline

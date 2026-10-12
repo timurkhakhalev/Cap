@@ -1,6 +1,6 @@
-import { createUniqueId, For, type JSX, Show } from "solid-js";
+import { cx } from "cva";
+import { createSignal, createUniqueId, For, type JSX, Show } from "solid-js";
 import { Toggle } from "~/components/Toggle";
-import { studioSoundFilters } from "~/utils/audio-filter-settings";
 import type {
 	AudioConfiguration,
 	AudioFilters,
@@ -8,20 +8,50 @@ import type {
 } from "~/utils/tauri";
 import { Slider } from "./ui";
 
+const formatDb = (value: number) =>
+	`${value > 0 ? "+" : ""}${value.toFixed(1)} dB`;
+
+export const formatVolumeDb = (value: number) =>
+	value <= -30 ? "Muted" : formatDb(value);
+
 function Filter(props: {
 	title: string;
-	description: string;
+	summary: string;
 	enabled: boolean;
 	onChange(value: boolean): void;
 	children: JSX.Element;
 }) {
+	const [open, setOpen] = createSignal(false);
+	const panel = createUniqueId();
 	return (
-		<div class="py-3 border-t border-ed-line">
-			<div class="flex gap-3 items-center justify-between">
-				<div>
-					<div class="text-xs font-medium text-ed-text-1">{props.title}</div>
-					<p class="mt-0.5 text-xs text-ed-text-3">{props.description}</p>
-				</div>
+		<div class="border-t border-ed-line">
+			<div class="flex gap-2 items-center py-2">
+				<button
+					type="button"
+					aria-expanded={open()}
+					aria-controls={panel}
+					aria-label={`${props.title} settings`}
+					class="flex flex-1 gap-1.5 items-center min-w-0 text-left rounded-md focus-visible:outline focus-visible:outline-ed-accent"
+					onClick={() => setOpen(!open())}
+				>
+					<IconCapChevronDown
+						class={cx(
+							"size-3 shrink-0 text-ed-text-3 transition-transform",
+							!open() && "-rotate-90",
+						)}
+					/>
+					<span
+						class={cx(
+							"text-xs font-medium truncate",
+							props.enabled ? "text-ed-text-1" : "text-ed-text-3",
+						)}
+					>
+						{props.title}
+					</span>
+					<span class="ml-auto text-[11px] tabular-nums whitespace-nowrap text-ed-text-3">
+						{props.enabled ? props.summary : "Off"}
+					</span>
+				</button>
 				<Toggle
 					size="sm"
 					aria-label={props.title}
@@ -29,8 +59,13 @@ function Filter(props: {
 					onChange={props.onChange}
 				/>
 			</div>
-			<Show when={props.enabled}>
-				<div class="mt-3">{props.children}</div>
+			<Show when={open()}>
+				<div
+					id={panel}
+					class={cx("pb-3 pl-[18px]", !props.enabled && "opacity-50")}
+				>
+					{props.children}
+				</div>
 			</Show>
 		</div>
 	);
@@ -47,12 +82,12 @@ function Parameter(props: {
 }) {
 	const id = createUniqueId();
 	return (
-		<div class="mt-2">
-			<div class="flex items-center justify-between gap-2">
+		<div class="mt-2 first:mt-0">
+			<div class="flex gap-2 justify-between items-center">
 				<label for={id} class="text-xs text-ed-text-2">
 					{props.label}
 				</label>
-				<div class="flex items-center gap-1 text-xs text-ed-text-3">
+				<div class="flex gap-1 items-center text-xs text-ed-text-3">
 					<input
 						id={id}
 						type="number"
@@ -60,7 +95,7 @@ function Parameter(props: {
 						max={props.max}
 						step={props.step}
 						value={Number(props.value.toFixed(1))}
-						class="w-16 rounded-md bg-ed-ctl px-2 py-1 text-right text-ed-text-1 focus-visible:outline focus-visible:outline-ed-accent"
+						class="px-1.5 py-0.5 w-14 text-right rounded-md bg-ed-ctl text-ed-text-1 focus-visible:outline focus-visible:outline-ed-accent"
 						onChange={(event) => {
 							const value = event.currentTarget.valueAsNumber;
 							if (Number.isFinite(value))
@@ -70,10 +105,11 @@ function Parameter(props: {
 							);
 						}}
 					/>
-					<span>{props.unit}</span>
+					<span class="w-7">{props.unit}</span>
 				</div>
 			</div>
 			<Slider
+				class="mt-1.5"
 				aria-label={props.label}
 				value={[props.value]}
 				minValue={props.min}
@@ -86,35 +122,62 @@ function Parameter(props: {
 	);
 }
 
+function Kbd(props: { children: string }) {
+	return (
+		<kbd class="px-1 py-px font-sans text-[10px] rounded border border-ed-line bg-ed-ctl text-ed-text-2">
+			{props.children}
+		</kbd>
+	);
+}
+
+const strengths: { value: VoiceIsolation; label: string }[] = [
+	{ value: "light", label: "Light" },
+	{ value: "balanced", label: "Balanced" },
+	{ value: "strong", label: "Strong" },
+];
+
 export function AudioFiltersCard(props: {
 	audio: AudioConfiguration;
 	previewBypass: boolean;
 	onPreviewBypassChange(value: boolean): void;
 	onChange(patch: Partial<AudioConfiguration>): void;
-	onSaveDefault(): void;
-	savingDefault: boolean;
 	children?: JSX.Element;
 }) {
 	const filters = () => props.audio.filters;
 	const update = (patch: Partial<AudioFilters>) =>
 		props.onChange({ filters: { ...filters(), ...patch } });
-	const strengths: { value: VoiceIsolation; label: string }[] = [
-		{ value: "light", label: "Light" },
-		{ value: "balanced", label: "Balanced" },
-		{ value: "strong", label: "Strong" },
-	];
+	const strengthLabel = () =>
+		strengths.find((strength) => strength.value === props.audio.isolation)
+			?.label ?? "";
 	return (
 		<section
 			aria-label="Microphone processing"
 			class="p-3.5 rounded-xl bg-ed-card-2"
 		>
-			<div class="flex justify-between items-center gap-3">
+			<div class="flex gap-3 justify-between items-center">
+				<span class="text-xs text-ed-text-2 shrink-0">Mic volume</span>
+				<span class="text-[11px] tabular-nums text-ed-text-3">
+					{formatVolumeDb(props.audio.micVolumeDb)}
+				</span>
+			</div>
+			<Slider
+				class="mt-2"
+				aria-label="Microphone volume"
+				disabled={props.audio.mute}
+				value={[props.audio.micVolumeDb]}
+				minValue={-30}
+				maxValue={10}
+				step={0.1}
+				onChange={([micVolumeDb]) => props.onChange({ micVolumeDb })}
+				formatTooltip={formatVolumeDb}
+			/>
+			<div class="flex gap-3 justify-between items-center pt-3 mt-3 border-t border-ed-line">
 				<div>
 					<h3 class="text-[13px] font-medium text-ed-text-1">
 						Voice processing
 					</h3>
 					<p class="mt-0.5 text-xs text-ed-text-3">
-						Adjust your recorded voice. Originals stay untouched.
+						Cleans up your voice. Originals stay untouched.
 					</p>
 				</div>
 				<Toggle
@@ -130,59 +193,30 @@ export function AudioFiltersCard(props: {
 				</p>
 			</Show>
 			<Show when={props.audio.improve}>
-				<button
-					type="button"
-					aria-pressed={props.previewBypass}
-					onClick={() => props.onPreviewBypassChange(!props.previewBypass)}
-					class="mt-3 w-full rounded-lg border border-ed-line px-3 py-2 text-xs text-ed-text-1 hover:bg-ed-ctl focus-visible:outline focus-visible:outline-ed-accent"
-				>
-					{props.previewBypass
-						? "Back to processed voice"
-						: "Listen without filters"}
-				</button>
 				<Show when={props.previewBypass}>
-					<p class="mt-2 text-xs text-ed-text-2">
-						Preview only. Your export keeps these filter settings.
-					</p>
-				</Show>
-				<Show
-					when={
-						!filters().limiter &&
-						(filters().autoLevel || props.audio.micVolumeDb > 0)
-					}
-				>
-					<p
-						role="status"
-						class="mt-3 rounded-lg bg-ed-ctl p-2.5 text-xs text-ed-text-2"
+					<div
+						aria-live="polite"
+						class="flex gap-2 justify-between items-center p-2 mt-3 text-xs rounded-lg bg-ed-ctl text-ed-text-2"
 					>
-						Peak protection is off. Raising the volume can distort loud words.
-						Turn on Peak protection to keep peaks under control.
-					</p>
+						<span>Playing the original audio.</span>
+						<button
+							type="button"
+							class="font-medium text-ed-accent hover:underline"
+							onClick={() => props.onPreviewBypassChange(false)}
+						>
+							Back to processed
+						</button>
+					</div>
 				</Show>
-				<details class="mt-3">
-					<summary class="cursor-pointer py-2 text-xs font-medium text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent">
-						Advanced tuning
-					</summary>
-					<button
-						type="button"
-						class="mt-3 mb-2 text-xs text-ed-accent hover:underline focus-visible:outline focus-visible:outline-ed-accent"
-						onClick={() =>
-							props.onChange({
-								filters: { ...studioSoundFilters },
-								isolation: "balanced",
-							})
-						}
-					>
-						Reset to Studio Sound
-					</button>
+				<div class="mt-3">
 					<Filter
 						title="Noise reduction"
-						description="Reduce steady background noise."
+						summary={strengthLabel()}
 						enabled={filters().noiseReduction}
 						onChange={(noiseReduction) => update({ noiseReduction })}
 					>
 						<div
-							class="flex rounded-lg bg-ed-ctl p-0.5"
+							class="flex p-0.5 rounded-lg bg-ed-ctl"
 							role="group"
 							aria-label="Noise reduction strength"
 						>
@@ -191,7 +225,7 @@ export function AudioFiltersCard(props: {
 									<button
 										type="button"
 										aria-pressed={props.audio.isolation === strength.value}
-										class="flex-1 rounded-md py-1.5 text-xs text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent"
+										class="flex-1 py-1 text-xs rounded-md text-ed-text-2 focus-visible:outline focus-visible:outline-ed-accent"
 										classList={{
 											"bg-ed-card text-ed-text-1":
 												props.audio.isolation === strength.value,
@@ -205,15 +239,15 @@ export function AudioFiltersCard(props: {
 								)}
 							</For>
 						</div>
-						<Show when={props.audio.isolation === "strong"}>
-							<p class="mt-2 text-xs text-ed-text-3">
-								Strong reduction may change the texture of your voice.
-							</p>
-						</Show>
+						<p class="mt-2 text-xs text-ed-text-3">
+							{props.audio.isolation === "strong"
+								? "Strong reduction may change the texture of your voice."
+								: "Reduces steady background noise like fans and hum."}
+						</p>
 					</Filter>
 					<Filter
 						title="Auto volume"
-						description="Bring quiet speech to a consistent level."
+						summary={`${filters().targetLufs.toFixed(0)} LUFS`}
 						enabled={filters().autoLevel}
 						onChange={(autoLevel) => update({ autoLevel })}
 					>
@@ -226,10 +260,13 @@ export function AudioFiltersCard(props: {
 							unit="LUFS"
 							onChange={(targetLufs) => update({ targetLufs })}
 						/>
+						<p class="mt-2 text-xs text-ed-text-3">
+							Brings quiet speech to a consistent level.
+						</p>
 					</Filter>
 					<Filter
 						title="Compressor"
-						description="Soften loud words and even out your voice."
+						summary={`${filters().thresholdDb.toFixed(0)} dB · ${filters().ratio.toFixed(1)}:1`}
 						enabled={filters().compressor}
 						onChange={(compressor) => update({ compressor })}
 					>
@@ -242,9 +279,6 @@ export function AudioFiltersCard(props: {
 							unit="dB"
 							onChange={(thresholdDb) => update({ thresholdDb })}
 						/>
-						<p class="text-xs text-ed-text-3">
-							Sound above this level is reduced.
-						</p>
 						<Parameter
 							label="Compression"
 							value={filters().ratio}
@@ -254,31 +288,31 @@ export function AudioFiltersCard(props: {
 							unit=":1"
 							onChange={(ratio) => update({ ratio })}
 						/>
-						<details class="mt-2 text-xs text-ed-text-2">
-							<summary class="cursor-pointer py-1">Timing settings</summary>
-							<Parameter
-								label="Attack"
-								value={filters().attackMs}
-								min={1}
-								max={100}
-								step={1}
-								unit="ms"
-								onChange={(attackMs) => update({ attackMs })}
-							/>
-							<Parameter
-								label="Release"
-								value={filters().releaseMs}
-								min={10}
-								max={1000}
-								step={10}
-								unit="ms"
-								onChange={(releaseMs) => update({ releaseMs })}
-							/>
-						</details>
+						<Parameter
+							label="Attack"
+							value={filters().attackMs}
+							min={1}
+							max={100}
+							step={1}
+							unit="ms"
+							onChange={(attackMs) => update({ attackMs })}
+						/>
+						<Parameter
+							label="Release"
+							value={filters().releaseMs}
+							min={10}
+							max={1000}
+							step={10}
+							unit="ms"
+							onChange={(releaseMs) => update({ releaseMs })}
+						/>
+						<p class="mt-2 text-xs text-ed-text-3">
+							Softens loud words above the threshold.
+						</p>
 					</Filter>
 					<Filter
 						title="Peak protection"
-						description="Limit loud peaks after microphone volume."
+						summary={formatDb(filters().ceilingDb)}
 						enabled={filters().limiter}
 						onChange={(limiter) => update({ limiter })}
 					>
@@ -291,23 +325,43 @@ export function AudioFiltersCard(props: {
 							unit="dB"
 							onChange={(ceilingDb) => update({ ceilingDb })}
 						/>
-						<p class="mt-2 text-xs text-ed-text-2">
-							Protects the microphone. Clip volume and other tracks can still
+						<p class="mt-2 text-xs text-ed-text-3">
+							Limits microphone peaks. Clip volume and other tracks can still
 							raise final peaks.
 						</p>
 					</Filter>
-				</details>
+				</div>
+				<Show
+					when={
+						!filters().limiter &&
+						(filters().autoLevel || props.audio.micVolumeDb > 0)
+					}
+				>
+					<div
+						role="status"
+						class="flex gap-2 items-start p-2.5 mt-1 text-xs rounded-lg bg-amber-400/10 text-ed-text-2"
+					>
+						<p class="flex-1">
+							Peak protection is off. Raising the volume can distort loud words.
+						</p>
+						<button
+							type="button"
+							class="font-medium whitespace-nowrap text-ed-accent hover:underline"
+							onClick={() => update({ limiter: true })}
+						>
+							Turn on
+						</button>
+					</div>
+				</Show>
+				<p class="flex gap-3 items-center pt-3 mt-1 text-[11px] border-t border-ed-line text-ed-text-3">
+					<span class="flex gap-1 items-center">
+						<Kbd>B</Kbd> compare
+					</span>
+					<span class="flex gap-1 items-center">
+						<Kbd>L</Kbd> loop a phrase
+					</span>
+				</p>
 			</Show>
-			<button
-				type="button"
-				disabled={props.savingDefault}
-				onClick={props.onSaveDefault}
-				class="mt-3 w-full rounded-lg border border-ed-line py-2 px-3 text-xs text-ed-text-2 hover:bg-ed-ctl disabled:opacity-50 focus-visible:outline focus-visible:outline-ed-accent"
-			>
-				{props.savingDefault
-					? "Saving…"
-					: "Use these settings for new recordings"}
-			</button>
 		</section>
 	);
 }

@@ -33,7 +33,13 @@ import { FrameButton } from "./FrameButton";
 import { ImageOverlay } from "./image-overlay";
 import { MaskOverlay } from "./MaskOverlay";
 import { PerformanceOverlay } from "./PerformanceOverlay";
-import { createLoopRestart, loopRange, loopRestartTime } from "./playback-loop";
+import {
+	createLoopRestart,
+	loopAroundPlayhead,
+	loopRange,
+	loopRestartTime,
+	setLoopEdgeAt,
+} from "./playback-loop";
 import { usePreparingEditor } from "./preparing-editor-context";
 import { PreparingFrame } from "./preparing-frame";
 import {
@@ -67,6 +73,7 @@ export function PlayerContent(props: { compactness?: number }) {
 		playbackIntent,
 		requestHandoffPlayback,
 		handoffPlaybackPending,
+		meta,
 	} = useEditorContext();
 
 	let panelRef: HTMLDivElement | undefined;
@@ -257,6 +264,35 @@ export function PlayerContent(props: { compactness?: number }) {
 	};
 
 	const activeLoop = () => loopRange(editorState.playbackLoop, totalDuration());
+	const playhead = () => editorState.previewTime ?? editorState.playbackTime;
+	const toggleLoop = () => {
+		if (activeLoop()) {
+			setEditorState("playbackLoop", "enabled", false);
+			return;
+		}
+		const saved = loopRange(
+			{ ...editorState.playbackLoop, enabled: true },
+			totalDuration(),
+		);
+		setEditorState(
+			"playbackLoop",
+			saved
+				? { ...saved, enabled: true }
+				: loopAroundPlayhead(playhead(), totalDuration()),
+		);
+	};
+	const setLoopEdgeAtPlayhead = (edge: "start" | "end") =>
+		setEditorState(
+			"playbackLoop",
+			setLoopEdgeAt(
+				editorState.playbackLoop,
+				edge,
+				playhead(),
+				totalDuration(),
+			),
+		);
+	const canCompareVoice = () =>
+		meta().hasMicrophone && project.audio.improve && !project.audio.mute;
 	const [loopRestarting, setLoopRestarting] = createSignal(false);
 	const loopRestart = createLoopRestart({
 		stop: () => commands.stopPlayback(),
@@ -386,6 +422,15 @@ export function PlayerContent(props: { compactness?: number }) {
 					editorState.timeline.interactMode === "split" ? "seek" : "split",
 				),
 		},
+		{ combo: "L", handler: toggleLoop },
+		{ combo: "I", handler: () => setLoopEdgeAtPlayhead("start") },
+		{ combo: "O", handler: () => setLoopEdgeAtPlayhead("end") },
+		{
+			combo: "B",
+			when: canCompareVoice,
+			handler: () =>
+				setEditorState("audioPreviewBypass", !editorState.audioPreviewBypass),
+		},
 		{
 			combo: "Mod+=",
 			handler: () =>
@@ -499,19 +544,6 @@ export function PlayerContent(props: { compactness?: number }) {
 					/>
 					<span class="text-[13px] tabular-nums text-ed-text-3"> / </span>
 					<Time seconds={totalDuration()} />
-					<Show when={activeLoop()}>
-						{(range) => (
-							<button
-								type="button"
-								class="ml-2 text-xs text-ed-accent"
-								title="Turn off loop preview"
-								aria-label="Turn off loop preview"
-								onClick={() => setEditorState("playbackLoop", "enabled", false)}
-							>
-								Loop {formatTime(range().start)}–{formatTime(range().end)}
-							</button>
-						)}
-					</Show>
 				</div>
 				<div class="flex flex-row flex-none gap-3.5 items-center">
 					<button
@@ -536,6 +568,11 @@ export function PlayerContent(props: { compactness?: number }) {
 						<button
 							type="button"
 							onClick={handlePlayPauseClick}
+							aria-label={
+								playbackIntent() && (!isAtEnd() || activeLoop())
+									? "Pause"
+									: "Play"
+							}
 							class="flex justify-center items-center rounded-full transition-opacity size-8 bg-ed-text-1 text-ed-card hover:opacity-90"
 						>
 							{!playbackIntent() || (isAtEnd() && !activeLoop()) ? (
@@ -563,6 +600,69 @@ export function PlayerContent(props: { compactness?: number }) {
 					</button>
 				</div>
 				<div class="flex flex-row flex-1 gap-0.5 justify-end items-center min-w-fit">
+					<Show when={canCompareVoice()}>
+						<Tooltip
+							kbd={["B"]}
+							content="Compare with the original microphone audio"
+						>
+							<div
+								role="group"
+								aria-label="Voice preview"
+								class="flex p-0.5 mr-1 text-[11px] rounded-md bg-ed-ctl"
+							>
+								<For each={[false, true]}>
+									{(bypass) => (
+										<button
+											type="button"
+											aria-pressed={editorState.audioPreviewBypass === bypass}
+											class={cx(
+												"px-2 h-5 rounded-[5px] transition-colors",
+												editorState.audioPreviewBypass === bypass
+													? "bg-ed-card text-ed-text-1 shadow-[0_1px_2px_rgba(0,0,0,0.12)] dark:bg-white/12"
+													: "text-ed-text-3 hover:text-ed-text-1",
+											)}
+											onClick={() =>
+												setEditorState("audioPreviewBypass", bypass)
+											}
+										>
+											{bypass ? "Original" : "Processed"}
+										</button>
+									)}
+								</For>
+							</div>
+						</Tooltip>
+					</Show>
+					<Tooltip
+						kbd={["L"]}
+						content={
+							activeLoop()
+								? "Stop looping. Shift-drag the ruler to draw a new range."
+								: "Loop preview. Shift-drag the ruler or press I / O to set the range."
+						}
+					>
+						<button
+							type="button"
+							aria-pressed={!!activeLoop()}
+							aria-label="Loop preview"
+							disabled={totalDuration() < 0.1}
+							onClick={toggleLoop}
+							class={cx(
+								"flex gap-1 items-center px-1.5 h-7 text-[11px] font-medium tabular-nums rounded-md transition-colors disabled:opacity-40",
+								activeLoop()
+									? "bg-amber-400/15 text-amber-500 dark:text-amber-300"
+									: "text-ed-text-2 hover:bg-ed-ctl hover:text-ed-text-1",
+							)}
+						>
+							<IconLucideRepeat class="size-3.5" />
+							<Show when={activeLoop()}>
+								{(range) => (
+									<span>
+										{formatTime(range().start)}–{formatTime(range().end)}
+									</span>
+								)}
+							</Show>
+						</button>
+					</Tooltip>
 					<EditorButton<typeof KToggleButton>
 						tooltipText="Toggle Split"
 						kbd={["S"]}

@@ -1,17 +1,20 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { render } from "solid-js/web";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { studioSoundFilters } from "~/utils/audio-filter-settings";
 import { type AudioPreset, audioPresetSettings } from "~/utils/audio-presets";
 import type { AudioConfiguration } from "~/utils/tauri";
-import { AudioLoopControls } from "./AudioLoopControls";
 import { AudioPresets } from "./AudioPresets";
 
 let dispose: (() => void) | undefined;
+beforeEach(() => {
+	vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
 afterEach(() => {
 	dispose?.();
 	document.body.replaceChildren();
+	vi.restoreAllMocks();
 });
 const audio: AudioConfiguration = {
 	improve: true,
@@ -23,8 +26,23 @@ const audio: AudioConfiguration = {
 	filters: { ...studioSoundFilters },
 };
 function button(text: string) {
-	const result = [...document.querySelectorAll("button")].find(
-		(item) => item.textContent === text,
+	if (
+		text === "Save as preset…" ||
+		text.startsWith("Delete preset") ||
+		text === "Use these settings for new recordings"
+	) {
+		document
+			.querySelector('[aria-label="Audio preset actions"]')
+			?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+			);
+	}
+	const result = [
+		...document.querySelectorAll('button, [role="menuitem"]'),
+	].find(
+		(item) =>
+			item.textContent?.trim() === text ||
+			item.getAttribute("aria-label") === text,
 	);
 	expect(result).toBeDefined();
 	return result as HTMLButtonElement;
@@ -34,16 +52,30 @@ const settle = async () => {
 	await Promise.resolve();
 };
 
+function chooseMenu(text: string) {
+	button(text).dispatchEvent(
+		new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+	);
+}
+
 it("saves a named snapshot and restores it without changing other tracks or mute", async () => {
 	const [current, setCurrent] = createStore(structuredClone(audio));
 	const [presets, setPresets] = createSignal<AudioPreset[]>([]);
 	dispose = render(
 		() => (
 			<AudioPresets
+				onSaveDefault={() => {}}
+				savingDefault={false}
 				audio={current}
 				presets={presets()}
 				loading={false}
 				onApply={(preset) => setCurrent(preset.audio)}
+				onApplyStudioSound={() =>
+					setCurrent({
+						filters: { ...studioSoundFilters },
+						isolation: "balanced",
+					})
+				}
 				onSave={async (name) => {
 					setPresets([
 						{ id: "one", name, audio: audioPresetSettings(current) },
@@ -56,8 +88,12 @@ it("saves a named snapshot and restores it without changing other tracks or mute
 		),
 		document.body,
 	);
-	button("Save as preset…").click();
+	await settle();
+	chooseMenu("Save as preset…");
 	const input = document.querySelector("input") as HTMLInputElement;
+	expect(button("Audio preset actions").getAttribute("aria-expanded")).toBe(
+		"false",
+	);
 	input.value = "My microphone";
 	input.dispatchEvent(new Event("input", { bubbles: true }));
 	(document.querySelector("form") as HTMLFormElement).dispatchEvent(
@@ -68,16 +104,20 @@ it("saves a named snapshot and restores it without changing other tracks or mute
 	setCurrent("filters", "ratio", 8);
 	setCurrent({ mute: true, systemVolumeDb: -5 });
 	expect(presets()[0].audio.filters.ratio).toBe(2);
-	const select = document.querySelector("select") as HTMLSelectElement;
-	expect(select.value).toBe("");
-	select.value = "one";
-	select.dispatchEvent(new Event("change", { bubbles: true }));
+	expect(button("My microphone").getAttribute("aria-pressed")).toBe("false");
+	expect(document.body.textContent).toContain("Custom");
+	button("My microphone").click();
 	expect(current.filters.ratio).toBe(2);
 	expect(current.mute).toBe(true);
 	expect(current.systemVolumeDb).toBe(-5);
-	button("Delete preset").click();
+	expect(button("My microphone").getAttribute("aria-pressed")).toBe("true");
+	chooseMenu("Delete preset My microphone");
 	await settle();
 	expect(presets()).toEqual([]);
+	chooseMenu("Save as preset…");
+	expect(document.querySelector("input")).not.toBeNull();
+	button("Cancel").click();
+	expect(document.querySelector("input")).toBeNull();
 });
 
 it("keeps the name and exposes storage errors for retry", async () => {
@@ -87,17 +127,20 @@ it("keeps the name and exposes storage errors for retry", async () => {
 	dispose = render(
 		() => (
 			<AudioPresets
+				onSaveDefault={() => {}}
+				savingDefault={false}
 				audio={audio}
 				presets={[]}
 				loading={false}
 				onApply={() => {}}
+				onApplyStudioSound={() => {}}
 				onSave={save}
 				onDelete={async () => {}}
 			/>
 		),
 		document.body,
 	);
-	button("Save as preset…").click();
+	chooseMenu("Save as preset…");
 	const input = document.querySelector("input") as HTMLInputElement;
 	input.value = "Desk";
 	input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -122,24 +165,26 @@ it("keeps explicitly selected presets distinct even with identical settings", as
 	dispose = render(
 		() => (
 			<AudioPresets
+				onSaveDefault={() => {}}
+				savingDefault={false}
 				audio={audio}
 				presets={presets}
 				loading={false}
 				onApply={() => {}}
+				onApplyStudioSound={() => {}}
 				onSave={save}
 				onDelete={remove}
 			/>
 		),
 		document.body,
 	);
-	const select = document.querySelector("select") as HTMLSelectElement;
-	select.value = "1";
-	select.dispatchEvent(new Event("change", { bubbles: true }));
-	expect(select.value).toBe("1");
-	button("Delete preset").click();
+	button("Travel").click();
+	expect(button("Travel").getAttribute("aria-pressed")).toBe("true");
+	expect(button("Desk").getAttribute("aria-pressed")).toBe("false");
+	chooseMenu("Delete preset Travel");
 	await settle();
 	expect(remove).toHaveBeenCalledWith("1");
-	button("Save as preset…").click();
+	chooseMenu("Save as preset…");
 	const input = document.querySelector("input") as HTMLInputElement;
 	input.value = " desk ";
 	input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -153,41 +198,60 @@ it("keeps explicitly selected presets distinct even with identical settings", as
 	);
 });
 
-it("sets loop boundaries from the playhead and reports reversed ranges", () => {
-	const [loop, setLoop] = createStore({ enabled: false, start: 0, end: 0 });
-	const [playhead, setPlayhead] = createSignal(5);
+it("applies the built-in Studio Sound preset and marks edits as custom", () => {
+	const [current, setCurrent] = createStore<AudioConfiguration>(
+		structuredClone({ ...audio, isolation: "strong" as const }),
+	);
 	dispose = render(
 		() => (
-			<AudioLoopControls
-				loop={loop}
-				duration={30}
-				playhead={playhead()}
-				onChange={setLoop}
+			<AudioPresets
+				onSaveDefault={() => {}}
+				savingDefault={false}
+				audio={current}
+				presets={[]}
+				loading={false}
+				onApply={() => {}}
+				onApplyStudioSound={() =>
+					setCurrent({
+						filters: { ...studioSoundFilters },
+						isolation: "balanced",
+					})
+				}
+				onSave={async () => {}}
+				onDelete={async () => {}}
 			/>
 		),
 		document.body,
 	);
-	(
-		document.querySelector(
-			'input[aria-label="Loop preview"]',
-		) as HTMLInputElement
-	).click();
-	expect(loop).toEqual({ enabled: true, start: 5, end: 15 });
-	setPlayhead(3);
-	(
-		document.querySelector(
-			'[aria-label="Set loop end at playhead"]',
-		) as HTMLButtonElement
-	).click();
-	expect(document.querySelector('[role="alert"]')?.textContent).toContain(
-		"after start",
+	expect(button("Studio Sound").getAttribute("aria-pressed")).toBe("false");
+	expect(document.body.textContent).toContain("Custom");
+	button("Studio Sound").click();
+	expect(current.isolation).toBe("balanced");
+	expect(button("Studio Sound").getAttribute("aria-pressed")).toBe("true");
+	expect(document.body.textContent).not.toContain("Custom");
+	setCurrent("filters", "ratio", 6);
+	expect(button("Studio Sound").getAttribute("aria-pressed")).toBe("false");
+});
+
+it("saves defaults only from the explicit preset menu action", () => {
+	const save = vi.fn();
+	dispose = render(
+		() => (
+			<AudioPresets
+				audio={audio}
+				presets={[]}
+				loading={false}
+				onApply={() => {}}
+				onApplyStudioSound={() => {}}
+				onSave={async () => {}}
+				onDelete={async () => {}}
+				onSaveDefault={save}
+				savingDefault={false}
+			/>
+		),
+		document.body,
 	);
-	setPlayhead(12);
-	(
-		document.querySelector(
-			'[aria-label="Set loop end at playhead"]',
-		) as HTMLButtonElement
-	).click();
-	expect(loop.end).toBe(12);
-	expect(document.querySelector('[role="alert"]')).toBeNull();
+	expect(save).not.toHaveBeenCalled();
+	chooseMenu("Use these settings for new recordings");
+	expect(save).toHaveBeenCalledTimes(1);
 });

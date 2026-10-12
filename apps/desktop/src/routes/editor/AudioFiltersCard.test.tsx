@@ -45,12 +45,10 @@ function mount() {
 				previewBypass={previewBypass()}
 				onPreviewBypassChange={setPreviewBypass}
 				onChange={(patch) => setAudio(patch)}
-				onSaveDefault={save}
-				savingDefault={false}
 			/>
 		);
 	}, document.body);
-	return { audio, save, previewBypass };
+	return { audio, save, previewBypass, setPreviewBypass };
 }
 function input(label: string) {
 	const element = document.querySelector<HTMLInputElement>(
@@ -58,6 +56,13 @@ function input(label: string) {
 	);
 	expect(element, `${label} must have an accessible input`).not.toBeNull();
 	return element as HTMLInputElement;
+}
+function expand(title: string) {
+	const toggle = document.querySelector<HTMLButtonElement>(
+		`button[aria-label="${title} settings"]`,
+	);
+	expect(toggle, `${title} must be expandable`).not.toBeNull();
+	if (toggle?.getAttribute("aria-expanded") !== "true") toggle?.click();
 }
 function numeric(label: string) {
 	const title = [...document.querySelectorAll("label")].find(
@@ -78,19 +83,20 @@ it("disables filters independently and keeps settings when processing is off", (
 	input("Voice processing").click();
 	expect(audio.filters.noiseReduction).toBe(false);
 });
-it("bounds numeric changes and hides advanced timing initially", () => {
+it("keeps parameters collapsed behind summaries and bounds numeric changes", () => {
 	const { audio } = mount();
-	expect(document.querySelector("details")?.open).toBe(false);
-	expect(document.querySelector("summary")?.textContent).toBe(
-		"Advanced tuning",
-	);
-	const advanced = document.querySelector("details") as HTMLDetailsElement;
-	expect(numeric("Threshold").closest("details")).toBe(advanced);
-	advanced.open = true;
+	expect(document.body.textContent).toContain("-18 dB · 2.0:1");
+	expect(
+		[...document.querySelectorAll("label")].some(
+			(item) => item.textContent === "Threshold",
+		),
+	).toBe(false);
+	expand("Compressor");
 	const threshold = numeric("Threshold");
 	threshold.value = "-28";
 	threshold.dispatchEvent(new Event("change", { bubbles: true }));
 	expect(audio.filters.thresholdDb).toBe(-28);
+	expect(document.body.textContent).toContain("-28 dB · 2.0:1");
 	const ratio = numeric("Compression");
 	ratio.value = "999";
 	ratio.dispatchEvent(new Event("change", { bubbles: true }));
@@ -98,19 +104,9 @@ it("bounds numeric changes and hides advanced timing initially", () => {
 	ratio.value = "";
 	ratio.dispatchEvent(new Event("change", { bubbles: true }));
 	expect(audio.filters.ratio).toBe(20);
-});
-it("resets processing and saves defaults only on explicit click", () => {
-	const { audio, save } = mount();
 	input("Compressor").click();
-	const button = (label: string) =>
-		[...document.querySelectorAll("button")].find(
-			(item) => item.textContent === label,
-		);
-	button("Reset to Studio Sound")?.click();
-	expect(audio.filters).toEqual(studioSoundFilters);
-	expect(save).not.toHaveBeenCalled();
-	button("Use these settings for new recordings")?.click();
-	expect(save).toHaveBeenCalledTimes(1);
+	expect(document.body.textContent).not.toContain("-28 dB · 20.0:1");
+	expect(document.body.textContent).toContain("Off");
 });
 
 it("explains clipping risk only while unprotected volume processing is active", () => {
@@ -124,7 +120,9 @@ it("explains clipping risk only while unprotected volume processing is active", 
 	expect(document.querySelector('[role="status"]')).toBeNull();
 	input("Voice processing").click();
 	expect(document.querySelector('[role="status"]')).not.toBeNull();
-	input("Peak protection").click();
+	[...document.querySelectorAll("button")]
+		.find((item) => item.textContent === "Turn on")
+		?.click();
 	expect(document.querySelector('[role="status"]')).toBeNull();
 });
 
@@ -133,6 +131,7 @@ it("undoes and redoes filter changes with the editor keyboard history", async ()
 	await Promise.resolve();
 	input("Noise reduction").click();
 	await Promise.resolve();
+	expand("Compressor");
 	const threshold = numeric("Threshold");
 	threshold.value = "-28";
 	threshold.dispatchEvent(new Event("change", { bubbles: true }));
@@ -158,25 +157,23 @@ it("undoes and redoes filter changes with the editor keyboard history", async ()
 	expect(audio.filters.thresholdDb).toBe(-28);
 });
 
-it("compares unprocessed audio without changing saved filter settings", () => {
-	const { audio, save, previewBypass } = mount();
+it("shows the original-audio preview and returns to processed without changing settings", () => {
+	const { audio, save, previewBypass, setPreviewBypass } = mount();
 	const original = JSON.stringify(audio);
-	const compare = [...document.querySelectorAll("button")].find(
-		(button) => button.textContent === "Listen without filters",
-	);
-	expect(compare).toBeDefined();
-	compare?.click();
-	expect(previewBypass()).toBe(true);
-	expect(compare?.getAttribute("aria-pressed")).toBe("true");
-	expect(JSON.stringify(audio)).toBe(original);
-	expect(save).not.toHaveBeenCalled();
-	compare?.click();
+	expect(document.body.textContent).not.toContain("Playing the original audio");
+	setPreviewBypass(true);
+	expect(document.body.textContent).toContain("Playing the original audio");
+	[...document.querySelectorAll("button")]
+		.find((button) => button.textContent === "Back to processed")
+		?.click();
 	expect(previewBypass()).toBe(false);
 	expect(JSON.stringify(audio)).toBe(original);
+	expect(save).not.toHaveBeenCalled();
 });
 
 it("names sliders and changes their values with the keyboard", () => {
 	const { audio } = mount();
+	expand("Compressor");
 	const slider = document.querySelector<HTMLElement>(
 		'[role="slider"][aria-label="Threshold"]',
 	);
@@ -190,4 +187,20 @@ it("names sliders and changes their values with the keyboard", () => {
 		new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }),
 	);
 	expect(audio.filters.thresholdDb).toBeGreaterThan(before);
+});
+
+it("adjusts microphone volume from the processing card", () => {
+	const { audio } = mount();
+	const slider = document.querySelector<HTMLElement>(
+		'[role="slider"][aria-label="Microphone volume"]',
+	);
+	expect(slider).not.toBeNull();
+	slider?.focus();
+	slider?.dispatchEvent(
+		new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
+	);
+	slider?.dispatchEvent(
+		new KeyboardEvent("keyup", { key: "ArrowRight", bubbles: true }),
+	);
+	expect(audio.micVolumeDb).toBeGreaterThan(0);
 });

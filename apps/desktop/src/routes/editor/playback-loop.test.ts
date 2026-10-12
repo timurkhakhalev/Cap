@@ -1,5 +1,15 @@
 import { expect, it, vi } from "vitest";
-import { createLoopRestart, loopRange, loopRestartTime } from "./playback-loop";
+import {
+	createLoopRestart,
+	drawLoop,
+	loopAroundPlayhead,
+	loopRange,
+	loopRestartTime,
+	moveLoop,
+	setLoopEdge,
+	setLoopEdgeAt,
+	snapLoopTime,
+} from "./playback-loop";
 
 it("repeats at the last frame and accepts a start between frames", () => {
 	const loop = { enabled: true, start: 2.01, end: 5 };
@@ -102,4 +112,81 @@ it("stops a restart which completed after pause", async () => {
 	finishStart();
 	await pending;
 	expect(stop).toHaveBeenCalledTimes(2);
+});
+
+it("starts a loop at the playhead and keeps it inside short recordings", () => {
+	expect(loopAroundPlayhead(3, 24)).toEqual({
+		enabled: true,
+		start: 3,
+		end: 8,
+	});
+	expect(loopAroundPlayhead(22, 24)).toEqual({
+		enabled: true,
+		start: 19,
+		end: 24,
+	});
+	expect(loopAroundPlayhead(1, 2)).toEqual({ enabled: true, start: 0, end: 2 });
+	expect(drawLoop(0, 0.04, 0.04)).toEqual({
+		enabled: false,
+		start: 0,
+		end: 0.04,
+	});
+});
+
+it("keeps edges ordered and the range inside the recording while dragging", () => {
+	const loop = { enabled: true, start: 2, end: 6 };
+	expect(setLoopEdge(loop, "start", 7, 10)).toMatchObject({
+		start: 5.9,
+		end: 6,
+	});
+	expect(setLoopEdge(loop, "end", 1, 10)).toMatchObject({ start: 2, end: 2.1 });
+	expect(setLoopEdge(loop, "end", 30, 10)).toMatchObject({ end: 10 });
+	expect(moveLoop(loop, 8, 10)).toMatchObject({ start: 6, end: 10 });
+	expect(moveLoop(loop, -3, 10)).toMatchObject({ start: 0, end: 4 });
+});
+
+it("draws loops in either direction with a minimum length", () => {
+	expect(drawLoop(5, 2, 10)).toEqual({ enabled: true, start: 2, end: 5 });
+	expect(drawLoop(5, 5, 10)).toMatchObject({ start: 5, end: 5.1 });
+	expect(drawLoop(10, 10, 10)).toMatchObject({ start: 9.9, end: 10 });
+	expect(loopRange(drawLoop(5, 5, 10), 10)).toBeDefined();
+	expect(
+		loopRange(
+			setLoopEdge({ enabled: true, start: 2, end: 6 }, "start", 7, 10),
+			10,
+		),
+	).toBeDefined();
+	expect(moveLoop({ enabled: true, start: 2, end: 20 }, 0, 10).end).toBe(10);
+});
+
+it("snaps to the closest target within tolerance", () => {
+	expect(snapLoopTime(4.05, [0, 4, 4.1], 0.2)).toEqual({
+		time: 4.1,
+		snapped: true,
+	});
+	expect(snapLoopTime(3, [4], 0.2)).toEqual({ time: 3, snapped: false });
+});
+
+it("sets loop edges at the playhead and opens a new range when they would cross", () => {
+	const loop = { enabled: false, start: 2, end: 6 };
+	expect(setLoopEdgeAt(loop, "start", 3, 24)).toEqual({
+		enabled: true,
+		start: 3,
+		end: 6,
+	});
+	expect(setLoopEdgeAt(loop, "start", 7, 24)).toEqual({
+		enabled: true,
+		start: 7,
+		end: 12,
+	});
+	expect(setLoopEdgeAt(loop, "end", 1, 24)).toEqual({
+		enabled: true,
+		start: 0,
+		end: 1,
+	});
+	expect(setLoopEdgeAt(loop, "end", 9, 24)).toEqual({
+		enabled: true,
+		start: 2,
+		end: 9,
+	});
 });
